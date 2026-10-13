@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mapa de Abastecimentos</title>
-  <meta name="description" content="Postos onde a frota abastece, com o último preço pago de Gasolina, Diesel S10 e ARLA.">
+  <meta name="description" content="Postos onde a frota abastece, com o último preço pago de Gasolina e Diesel S10.">
   <meta name="theme-color" content="#FFFFFF">
   <link rel="icon" type="image/png" href="favicon-32x32.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -12,7 +12,7 @@
   <link crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" crossorigin="anonymous" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="stylesheet" crossorigin="anonymous" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=3">
   <script>
     try { var t = localStorage.getItem('mapa-tema'); if (t === 'escuro' || t === 'claro') document.documentElement.dataset.theme = t; } catch (e) {}
   </script>
@@ -69,16 +69,16 @@
 
         <label class="busca">
           <svg class="ic" aria-hidden="true"><use href="#i-busca"/></svg>
-          <input id="busca" type="search" placeholder="Buscar posto, endereço ou CNPJ" autocomplete="off" spellcheck="false" aria-label="Buscar">
+          <input id="busca" type="search" placeholder="Nome, cidade, endereço ou CNPJ" autocomplete="off" spellcheck="false" aria-label="Buscar" enterkeyhint="search">
           <button class="busca-limpar" id="busca-limpar" type="button" aria-label="Limpar busca" hidden><svg class="ic"><use href="#i-fechar"/></svg></button>
         </label>
+        <div class="sugestoes" id="sugestoes" aria-label="Cidades encontradas"></div>
         <p class="painel-status" id="status-movel"></p>
 
         <div class="filtros">
           <div class="segmentado" role="radiogroup" aria-label="Combustível" id="seg-combustivel">
             <button role="radio" data-valor="gasolina" aria-checked="false">Gasolina</button>
             <button role="radio" data-valor="dieselS10" aria-checked="true"><span class="longo">Diesel S10</span><span class="curto">S10</span></button>
-            <button role="radio" data-valor="arla" aria-checked="false">ARLA</button>
           </div>
           <div class="segmentado segmentado-periodo" role="radiogroup" aria-label="Período do último abastecimento" id="seg-periodo">
             <button role="radio" data-valor="30" aria-checked="false"><span class="longo">30 dias</span><span class="curto">30d</span></button>
@@ -140,10 +140,10 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="config.js"></script>
+  <script src="config.js?v=3"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

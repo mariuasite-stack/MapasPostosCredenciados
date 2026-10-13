@@ -6,7 +6,7 @@
     API_URL: '', TITULO: 'Mapa de Abastecimentos', LOGO: '', COMBUSTIVEL_PADRAO: 'dieselS10', DIAS_SEM_USO: 90
   }, window.MAPA_CONFIG || {});
 
-  const COMBUSTIVEIS = { gasolina: 'Gasolina', dieselS10: 'Diesel S10', arla: 'ARLA' };
+  const COMBUSTIVEIS = { gasolina: 'Gasolina', dieselS10: 'Diesel S10' };
   const UF_CODIGO = { RO: 11, AC: 12, AM: 13, RR: 14, PA: 15, AP: 16, TO: 17, MA: 21, PI: 22, CE: 23, RN: 24, PB: 25, PE: 26, AL: 27, SE: 28, BA: 29, MG: 31, ES: 32, RJ: 33, SP: 35, PR: 41, SC: 42, RS: 43, MS: 50, MT: 51, GO: 52, DF: 53 };
   const UF_NOME = { AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte', RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins' };
   const IBGE = 'https://servicodados.ibge.gov.br/api';
@@ -16,12 +16,13 @@
     escuro: { base: ESRI + 'World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', ref: ESRI + 'World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}' }
   };
   const ATRIB = 'Mapa &copy; <a href="https://www.esri.com">Esri</a>, HERE, Garmin, &copy; OpenStreetMap · Malhas IBGE';
+  const ZOOM_ROTULOS = 9;
 
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const el = {
     status: $('#status'), statusMovel: $('#status-movel'), lista: $('#lista'), busca: $('#busca'), buscaLimpar: $('#busca-limpar'),
-    chips: $('#chips'), resumo: $('#resumo'), ordem: $('#ordem'), legenda: $('#legenda'),
+    sugestoes: $('#sugestoes'), chips: $('#chips'), resumo: $('#resumo'), ordem: $('#ordem'), legenda: $('#legenda'),
     detalhe: $('#detalhe'), painel: $('#painel'), alca: $('#painel-alca'), toast: $('#toast'),
     btnTema: $('#btn-tema'), btnPerto: $('#btn-perto'), btnCaptura: $('#btn-captura'),
     captura: $('#captura'), capturaRet: $('#captura-ret'), capturaDica: $('#captura-dica'),
@@ -30,15 +31,14 @@
   };
 
   const estado = {
-    dados: null, postos: [], porId: {},
+    dados: null, postos: [], porId: {}, cidades: new Map(),
     aba: 'posto', busca: '', periodo: 'tudo', combustivel: CFG.COMBUSTIVEL_PADRAO in COMBUSTIVEIS ? CFG.COMBUSTIVEL_PADRAO : 'dieselS10',
-    uf: null, mesoId: null, cidade: null, selecionado: null, ordem: 'recente',
+    uf: null, cidade: null, selecionado: null, ordem: 'recente',
     usuario: null, filtrados: [], faixa: null
   };
 
   // ---------------------------------------------------------------- utilidades
   const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
-  const moeda = n => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const preco = n => (n === null || n === undefined) ? '—' : n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const inteiro = n => Math.round(n).toLocaleString('pt-BR');
   const dataBR = iso => { if (!iso) return '—'; const p = iso.slice(0, 10).split('-'); return `${p[2]}/${p[1]}/${p[0]}`; };
@@ -68,7 +68,6 @@
   function nomeServico(t) {
     const n = norm(t).toUpperCase();
     if (!n) return '—';
-    if (n.includes('ARLA')) return 'ARLA 32';
     if (/S ?-?10\b/.test(n)) return 'Diesel S10';
     if (/S ?-?500\b/.test(n)) return 'Diesel S500';
     return String(t).toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
@@ -87,8 +86,32 @@
     toastTimer = setTimeout(() => el.toast.classList.remove('visivel'), 2800);
   }
   const ehCelular = () => matchMedia('(max-width: 760px)').matches;
+  const temHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
   const precoDe = (p, tipo) => (p.precos && p.precos[tipo]) ? p.precos[tipo].ultimo : null;
   const inativo = p => diasDesde(p.ultimo && p.ultimo.data) > CFG.DIAS_SEM_USO;
+  const nomeCidade = p => p.cidade || 'Cidade não informada';
+  const chaveCidade = p => `${p.uf}|${p._cidade}`;
+
+  /** Marca em <mark> os trechos do texto que batem com os termos (sem acento). */
+  function realcar(texto, termos) {
+    const t = String(texto || '');
+    if (!termos.length) return esc(t);
+    const n = t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const marcas = new Array(t.length).fill(false);
+    termos.forEach(q => {
+      let i = n.indexOf(q);
+      while (q && i !== -1) { for (let k = i; k < i + q.length; k++) marcas[k] = true; i = n.indexOf(q, i + q.length); }
+    });
+    // norm() preserva o comprimento para letras latinas comuns; se não, desiste do realce
+    if (n.length !== t.length) return esc(t);
+    let out = '', aberto = false;
+    for (let k = 0; k < t.length; k++) {
+      if (marcas[k] && !aberto) { out += '<mark>'; aberto = true; }
+      if (!marcas[k] && aberto) { out += '</mark>'; aberto = false; }
+      out += esc(t[k]);
+    }
+    return out + (aberto ? '</mark>' : '');
+  }
 
   // ---------------------------------------------------------------- tema
   function aplicarTema(tema) {
@@ -98,6 +121,7 @@
     el.btnTema.setAttribute('aria-label', escuro ? 'Usar tema claro' : 'Usar tema escuro');
     $('meta[name="theme-color"]').setAttribute('content', escuro ? '#202428' : '#FFFFFF');
     if (camadaBase) { camadaBase.setUrl(TILES[tema].base); camadaRef.setUrl(TILES[tema].ref); }
+    if (camadaCidades) camadaCidades.setStyle(estiloCidade);
   }
   el.btnTema.addEventListener('click', () => {
     const novo = document.documentElement.dataset.theme === 'escuro' ? 'claro' : 'escuro';
@@ -111,30 +135,28 @@
   L.control.zoom({ position: 'bottomright', zoomInTitle: 'Aproximar', zoomOutTitle: 'Afastar' }).addTo(mapa);
   mapa.attributionControl.setPrefix(false);
   const temaInicial = document.documentElement.dataset.theme === 'escuro' ? 'escuro' : 'claro';
+  let camadaCidades = null;
   let camadaBase = L.tileLayer(TILES[temaInicial].base, { attribution: ATRIB, maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' }).addTo(mapa);
   mapa.createPane('rotulos').style.zIndex = 450;
   mapa.getPane('rotulos').style.pointerEvents = 'none';
   let camadaRef = L.tileLayer(TILES[temaInicial].ref, { pane: 'rotulos', maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' }).addTo(mapa);
   aplicarTema(temaInicial);
 
-  const malhaPane = mapa.createPane('malhas');
-  malhaPane.style.zIndex = 350;
-  let camadaUFs = null, camadaMeso = null, mesoNomes = {};
+  mapa.createPane('malhas').style.zIndex = 350;
+  const corTeal = () => getComputedStyle(document.documentElement).getPropertyValue('--teal').trim() || '#00989E';
 
   const grupo = L.markerClusterGroup({
     showCoverageOnHover: false,
-    maxClusterRadius: z => (z >= 10 ? 64 : 92),
+    maxClusterRadius: z => (z >= 10 ? 48 : 72),
     spiderfyOnMaxZoom: true,
     disableClusteringAtZoom: 12,
     iconCreateFunction(cluster) {
-      const filhos = cluster.getAllChildMarkers();
-      let min = null;
-      filhos.forEach(m => { const v = m.options.preco; if (v !== null && (min === null || v < min)) min = v; });
-      const n = filhos.length;
+      const n = cluster.getChildCount();
+      const tam = n < 10 ? 34 : n < 50 ? 40 : 46;
       return L.divIcon({
         className: 'tag-ancora',
-        html: `<div class="grupo-pin ${nivel(min)}" title="${plural(n, 'posto', 'postos')}${min !== null ? `, menor preço R$ ${preco(min)}` : ''}"><b>${n}</b>${min !== null ? `<span><small>mín.</small> ${preco(min)}</span>` : ''}</div>`,
-        iconSize: [110, 36], iconAnchor: [55, 18]
+        html: `<div class="grupo-pin" style="width:${tam}px;height:${tam}px" title="${plural(n, 'posto', 'postos')} — aproxime para ver">${n}</div>`,
+        iconSize: [tam, tam], iconAnchor: [tam / 2, tam / 2]
       });
     }
   });
@@ -146,44 +168,67 @@
     fetch(`${IBGE}/v3/malhas/paises/BR?intrarregiao=UF&formato=application/vnd.geo%2Bjson&qualidade=minima`)
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(geo => {
-        camadaUFs = L.geoJSON(geo, {
-          pane: 'malhas', interactive: false,
-          style: () => ({ color: getComputedStyle(document.documentElement).getPropertyValue('--teal').trim() || '#00989E', weight: 1, opacity: .45, fill: false })
-        }).addTo(mapa);
+        L.geoJSON(geo, { pane: 'malhas', interactive: false, style: () => ({ color: corTeal(), weight: 1, opacity: .4, fill: false }) }).addTo(mapa);
       })
       .catch(() => { /* contornos são opcionais */ });
   }
 
-  let mesoPedido = 0;
-  function carregarMalhaMeso(uf) {
-    const pedido = ++mesoPedido;
-    if (camadaMeso) { mapa.removeLayer(camadaMeso); camadaMeso = null; }
-    if (!uf || !UF_CODIGO[uf]) return;
-    const cod = UF_CODIGO[uf];
-    Promise.all([
-      fetch(`${IBGE}/v3/malhas/estados/${cod}?intrarregiao=mesorregiao&formato=application/vnd.geo%2Bjson&qualidade=minima`).then(r => r.json()),
-      fetch(`${IBGE}/v1/localidades/estados/${cod}/mesorregioes`).then(r => r.json()).catch(() => [])
-    ]).then(([geo, nomes]) => {
-      if (pedido !== mesoPedido) return;
-      (nomes || []).forEach(m => { mesoNomes[m.id] = m.nome; });
-      camadaMeso = L.geoJSON(geo, {
-        pane: 'malhas',
-        style: f => estiloMeso(f),
-        onEachFeature(f, camada) {
-          const id = Number(f.properties.codarea);
-          camada.bindTooltip(mesoNomes[id] || 'Mesorregião', { sticky: true, className: 'rotulo-meso', direction: 'top', offset: [0, -8] });
-          camada.on('click', () => { definirFiltro({ mesoId: estado.mesoId === id ? null : id, cidade: null }); });
-          camada.on('mouseover', () => camada.setStyle({ fillOpacity: estado.mesoId === id ? .16 : .08 }));
-          camada.on('mouseout', () => camadaMeso && camadaMeso.resetStyle(camada));
-        }
-      }).addTo(mapa);
-    }).catch(() => { /* sem malha: segue só com os postos */ });
+  // Cidades com postos: contorno e preenchimento do município (malha IBGE por estado)
+  const malhasUF = {};
+  function carregarCidades() {
+    const porUF = {};
+    estado.postos.forEach(p => { if (p.cidadeId && UF_CODIGO[p.uf]) (porUF[p.uf] = porUF[p.uf] || new Set()).add(Number(p.cidadeId)); });
+    const ufs = Object.keys(porUF);
+    if (!ufs.length) return;
+    Promise.all(ufs.map(uf => malhasUF[uf] || (malhasUF[uf] = fetch(`${IBGE}/v3/malhas/estados/${UF_CODIGO[uf]}?intrarregiao=municipio&formato=application/vnd.geo%2Bjson&qualidade=minima`)
+      .then(r => r.ok ? r.json() : null).catch(() => null))))
+      .then(geos => {
+        const feats = [];
+        geos.forEach((g, i) => {
+          if (!g || !g.features) return;
+          g.features.forEach(f => { if (porUF[ufs[i]].has(Number(f.properties.codarea))) feats.push(f); });
+        });
+        if (camadaCidades) mapa.removeLayer(camadaCidades);
+        camadaCidades = L.geoJSON({ type: 'FeatureCollection', features: feats }, {
+          pane: 'malhas',
+          style: estiloCidade,
+          onEachFeature(f, camada) {
+            const id = Number(f.properties.codarea);
+            const info = estado.cidades.get(id);
+            if (!info) return;
+            camada.bindTooltip(esc(info.nome), { permanent: true, direction: 'center', className: 'rotulo-cidade', interactive: false, pane: 'rotulos' });
+            camada.on('mouseover', e => { camada.setStyle({ fillOpacity: .22 }); mostrarDicaCidade(info, e.latlng); });
+            camada.on('mousemove', e => dicaCidade.setLatLng(e.latlng));
+            camada.on('mouseout', () => { camadaCidades.resetStyle(camada); mapa.closeTooltip(dicaCidade); });
+            camada.on('click', e => {
+              L.DomEvent.stopPropagation(e);
+              const k = info.chave;
+              definirFiltro({ cidade: estado.cidade === k ? null : k });
+            });
+          }
+        }).addTo(mapa);
+        atualizarRotulos();
+      });
   }
-  function estiloMeso(f) {
+  function estiloCidade(f) {
     const id = Number(f.properties.codarea);
-    const ativo = estado.mesoId === id;
-    const cor = getComputedStyle(document.documentElement).getPropertyValue('--teal').trim() || '#00989E';
-    return { color: cor, weight: ativo ? 2.5 : 1.25, opacity: ativo ? 1 : .7, fillColor: cor, fillOpacity: ativo ? .12 : 0, dashArray: ativo ? null : '4 3' };
+    const info = estado.cidades.get(id);
+    const ativo = info && estado.cidade === info.chave;
+    const visivel = info && estado.filtrados.some(p => Number(p.cidadeId) === id);
+    return {
+      color: corTeal(), weight: ativo ? 2.5 : 1.25, opacity: visivel ? (ativo ? 1 : .8) : .25,
+      fillColor: corTeal(), fillOpacity: ativo ? .2 : visivel ? .1 : .03
+    };
+  }
+  function atualizarRotulos() { el.mapa.classList.toggle('mostra-cidades', mapa.getZoom() >= ZOOM_ROTULOS); }
+  mapa.on('zoomend', atualizarRotulos);
+
+  const dicaCidade = L.tooltip({ direction: 'top', offset: [0, -12], className: 'dica-cidade' });
+  function mostrarDicaCidade(info, latlng) {
+    if (!temHover()) return;
+    const ps = estado.filtrados.filter(p => chaveCidade(p) === info.chave);
+    dicaCidade.setLatLng(latlng).setContent(`<b>${esc(info.nome)}/${esc(info.uf)}</b> · ${plural(ps.length, 'posto', 'postos')}<br>${COMBUSTIVEIS[estado.combustivel]} ${faixaTexto(ps)}<small>${estado.cidade === info.chave ? 'Clique para ver todas as cidades' : 'Clique para filtrar esta cidade'}</small>`);
+    mapa.openTooltip(dicaCidade);
   }
 
   // ---------------------------------------------------------------- dados
@@ -191,7 +236,7 @@
     renderEsqueleto();
     const exemplo = !CFG.API_URL;
     const url = exemplo ? 'dados-exemplo.json' : CFG.API_URL;
-    const chaveCache = 'mapa-dados-v1';
+    const chaveCache = 'mapa-dados-v2';
 
     if (!exemplo) {
       const salvo = ls.get(chaveCache);
@@ -222,36 +267,63 @@
 
   function aplicarDados(json, exemplo, doCache) {
     estado.dados = json;
-    estado.postos = json.postos.map(p => Object.assign({}, p, {
-      _busca: norm([p.nome, p.razao, p.endereco, p.cidade, p.uf, p.cnpj, p.mesorregiao].join(' ')),
-      _cidade: norm(p.cidade), _temCoord: p.lat !== null && p.lng !== null && !isNaN(p.lat) && !isNaN(p.lng)
-    }));
+    estado.postos = json.postos.map(p => {
+      const precos = { gasolina: (p.precos && p.precos.gasolina) || null, dieselS10: (p.precos && p.precos.dieselS10) || null };
+      return Object.assign({}, p, {
+        precos,
+        _nome: norm(p.nome),
+        _cidade: norm(p.cidade),
+        _busca: norm([p.nome, p.razao, p.endereco, p.cidade, p.uf, UF_NOME[p.uf]].join(' ')),
+        _cnpj: String(p.cnpj || '').replace(/\D/g, ''),
+        _temCoord: p.lat !== null && p.lng !== null && !isNaN(p.lat) && !isNaN(p.lng)
+      });
+    });
     estado.porId = {};
-    estado.postos.forEach(p => { estado.porId[p.id] = p; if (p.mesorregiaoId) mesoNomes[p.mesorregiaoId] = p.mesorregiao; });
+    estado.cidades = new Map();
+    estado.postos.forEach(p => {
+      estado.porId[p.id] = p;
+      if (p.cidadeId) estado.cidades.set(Number(p.cidadeId), { nome: p.cidade, uf: p.uf, chave: chaveCidade(p) });
+    });
     el.aviso.hidden = !exemplo;
     const quandoGerado = json.geradoEm ? new Date(json.geradoEm) : null;
     const g = quandoGerado && !isNaN(quandoGerado) ? quandoGerado.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', ' às') : '—';
     estado.atualizadoTexto = exemplo ? `Dados de exemplo (sintéticos) de ${g}` : `Dados atualizados em ${g}${doCache ? ' (cópia salva)' : ''}`;
-    el.status.innerHTML = `${exemplo ? `<b>Dados de exemplo</b> de ${esc(g)}` : `Atualizado em <b>${esc(g)}</b>${doCache ? ' (cópia salva)' : ''}`} · <b>${inteiro(estado.postos.length)}</b> postos desde ${dataBR(json.periodoInicio)}`;
+    el.status.innerHTML = `${exemplo ? `<b>Dados de exemplo</b> de ${esc(g)}` : `Atualizado em <b>${esc(g)}</b>${doCache ? ' (cópia salva)' : ''}`} · <b>${inteiro(estado.postos.length)}</b> postos`;
     el.statusMovel.textContent = `${exemplo ? `Dados de exemplo de ${g}` : `Atualizado em ${g}`} · ${plural(estado.postos.length, 'posto', 'postos')}`;
     lerHash();
     atualizar({ ajustar: true });
+    carregarCidades();
   }
 
-  // ---------------------------------------------------------------- filtros
+  // ---------------------------------------------------------------- busca e filtros
+  const termosBusca = () => { const q = norm(estado.busca); return q ? q.split(/\s+/).filter(Boolean) : []; };
+
+  /** Pontuação de um posto para os termos: 0 = não serve. Nome pesa mais que cidade, que pesa mais que o resto. */
+  function pontuar(p, termos) {
+    let total = 0;
+    for (const t of termos) {
+      const dig = t.replace(/\D/g, '');
+      let s = 0;
+      if (p._nome.startsWith(t) || p._nome.includes(' ' + t)) s = 6;
+      else if (p._nome.includes(t)) s = 4;
+      else if (p._cidade.startsWith(t) || p._cidade.includes(' ' + t)) s = 4;
+      else if (p._cidade.includes(t)) s = 3;
+      else if (t.length === 2 && norm(p.uf) === t) s = 2;
+      else if (p._busca.includes(t)) s = 1;
+      else if (dig.length >= 4 && dig === t && p._cnpj.includes(dig)) s = 5;
+      if (!s) return 0;
+      total += s;
+    }
+    return total;
+  }
+
   function filtrar() {
-    const q = norm(estado.busca);
-    const termos = q ? q.split(/\s+/) : [];
+    const termos = estado.aba === 'posto' ? termosBusca() : [];
     return estado.postos.filter(p => {
       if (estado.periodo !== 'tudo' && diasDesde(p.ultimo && p.ultimo.data) > Number(estado.periodo)) return false;
       if (estado.uf && p.uf !== estado.uf) return false;
-      if (estado.mesoId && p.mesorregiaoId !== estado.mesoId) return false;
-      if (estado.cidade && `${p.uf}|${p._cidade}` !== estado.cidade) return false;
-      if (termos.length) {
-        const alvo = estado.aba === 'cidade' ? `${p._cidade} ${norm(p.uf)}`
-          : estado.aba === 'estado' ? norm(`${p.uf} ${UF_NOME[p.uf] || ''} ${p.mesorregiao}`) : p._busca;
-        if (!termos.every(t => alvo.includes(t))) return false;
-      }
+      if (estado.cidade && chaveCidade(p) !== estado.cidade) return false;
+      if (termos.length) { p._pontos = pontuar(p, termos); if (!p._pontos) return false; }
       return true;
     });
   }
@@ -273,10 +345,7 @@
   }
 
   function definirFiltro(mud, opcoes) {
-    const ufAntes = estado.uf;
     Object.assign(estado, mud);
-    if (mud.uf !== undefined && mud.uf !== ufAntes) { estado.mesoId = mud.mesoId || null; carregarMalhaMeso(estado.uf); }
-    else if (camadaMeso) camadaMeso.setStyle(estiloMeso);
     atualizar(Object.assign({ ajustar: true }, opcoes));
   }
 
@@ -284,12 +353,14 @@
     opcoes = opcoes || {};
     estado.filtrados = filtrar();
     estado.faixa = calcularFaixa(estado.filtrados);
+    if (estado.selecionado && !estado.porId[estado.selecionado]) estado.selecionado = null;
     renderMarcadores();
     renderChips();
+    renderSugestoes();
     renderResumo();
     renderLista();
     renderLegenda();
-    if (estado.selecionado && !estado.porId[estado.selecionado]) estado.selecionado = null;
+    if (camadaCidades) camadaCidades.setStyle(estiloCidade);
     if (opcoes.ajustar) ajustarMapa();
     escreverHash();
   }
@@ -298,35 +369,87 @@
     const pts = estado.filtrados.filter(p => p._temCoord).map(p => [p.lat, p.lng]);
     if (!pts.length) return;
     const pad = ehCelular() ? { paddingTopLeft: [24, 60], paddingBottomRight: [24, 190] } : { paddingTopLeft: [40, 70], paddingBottomRight: [estado.selecionado ? 420 : 40, 40] };
-    if (pts.length === 1) mapa.setView(pts[0], 13, { animate: true });
+    if (pts.length === 1) mapa.setView(pts[0], 14, { animate: true });
     else mapa.fitBounds(L.latLngBounds(pts), Object.assign({ maxZoom: 13, animate: true }, pad));
   }
 
-  // ---------------------------------------------------------------- marcadores
-  function iconeTag(p, sel) {
-    const v = precoDe(p, estado.combustivel);
-    const cls = ['tag', nivel(v), inativo(p) ? 'inativo' : '', sel ? 'sel' : ''].join(' ');
-    const txt = v === null ? '—' : `<small>R$</small>${preco(v)}`;
-    return L.divIcon({ className: 'tag-ancora' + (sel ? ' selecionado' : ''), html: `<div class="${cls}">${txt}</div>`, iconSize: [84, 40], iconAnchor: [42, 40] });
+  // ---------------------------------------------------------------- marcadores (pino padrão)
+  const PINO = '<svg viewBox="0 0 30 40" width="30" height="40" aria-hidden="true"><path class="pino-corpo" d="M15 38.5S26.5 25.6 26.5 15.6a11.5 11.5 0 0 0-23 0C3.5 25.6 15 38.5 15 38.5Z"/><circle class="pino-miolo" cx="15" cy="15.4" r="4.6"/></svg>';
+  function iconePino(p, sel) {
+    const cls = ['pino', nivel(precoDe(p, estado.combustivel)), inativo(p) ? 'inativo' : '', sel ? 'sel' : ''].join(' ');
+    return L.divIcon({ className: 'tag-ancora' + (sel ? ' selecionado' : ''), html: `<div class="${cls}">${PINO}</div>`, iconSize: [30, 40], iconAnchor: [15, 39] });
   }
   function renderMarcadores() {
+    fecharCartao(true);
     grupo.clearLayers();
     marcadores = {};
     const novos = [];
     estado.filtrados.forEach(p => {
       if (!p._temCoord) return;
       const m = L.marker([p.lat, p.lng], {
-        icon: iconeTag(p, p.id === estado.selecionado),
-        preco: precoDe(p, estado.combustivel),
-        title: `${p.nome} — ${p.cidade}/${p.uf}`,
+        icon: iconePino(p, p.id === estado.selecionado),
+        alt: `${p.nome}, ${nomeCidade(p)}/${p.uf}`,
         keyboard: true,
         riseOnHover: true
       });
-      m.on('click', () => selecionar(p.id, { centralizar: false }));
+      m.on('click', () => { fecharCartao(true); selecionar(p.id, { centralizar: false }); });
+      m.on('mouseover', () => { if (temHover()) abrirCartao(p, m); });
+      m.on('mouseout', () => agendarFechar());
       marcadores[p.id] = m;
       novos.push(m);
     });
     grupo.addLayers(novos);
+  }
+
+  // ---------------------------------------------------------------- cartão ao passar o mouse
+  const cartao = L.popup({ closeButton: false, autoPan: false, offset: [0, -34], className: 'cartao', maxWidth: 320, minWidth: 260 });
+  let cartaoId = null, cartaoTimer = null;
+  function htmlCartao(p) {
+    const u = p.ultimo || {};
+    const linha = tipo => {
+      const info = p.precos[tipo];
+      const ativo = tipo === estado.combustivel ? ' ativo' : '';
+      return `<div class="cartao-preco${ativo}"><span>${COMBUSTIVEIS[tipo]}</span>${info
+        ? `<b><small>R$</small>${preco(info.ultimo)}</b><em>${dataCurta(info.data)}</em>`
+        : '<b class="sem">—</b><em>sem registro</em>'}</div>`;
+    };
+    return `<div class="cartao-corpo" data-id="${esc(p.id)}">
+      <strong class="cartao-nome">${esc(p.nome)}</strong>
+      <span class="cartao-local">${esc(nomeCidade(p))}/${esc(p.uf)}${estado.usuario ? ` · ${km(distanciaKm(estado.usuario, p))}` : ''}</span>
+      <div class="cartao-precos">${linha('gasolina')}${linha('dieselS10')}</div>
+      <p class="cartao-ultimo${inativo(p) ? ' inativo' : ''}">Último abastecimento <b>${dataBR(u.data)}${u.hora ? ' ' + esc(u.hora) : ''}</b> · ${esc(nomeServico(u.combustivel))}</p>
+      <div class="cartao-acoes">
+        <a class="botao primario" href="${esc(p.rotaUrl || p.mapsUrl)}" target="_blank" rel="noopener"><svg class="ic"><use href="#i-rota"/></svg>Como chegar</a>
+        <button class="botao" type="button" data-acao="localizacao"><svg class="ic"><use href="#i-pino"/></svg>Gerar localização</button>
+      </div>
+    </div>`;
+  }
+  function abrirCartao(p, m) {
+    clearTimeout(cartaoTimer);
+    if (cartaoId === p.id && mapa.hasLayer(cartao)) return;
+    cartaoId = p.id;
+    cartao.setLatLng(m.getLatLng()).setContent(htmlCartao(p)).openOn(mapa);
+    const no = cartao.getElement();
+    if (no && !no._ligado) {
+      no._ligado = true;
+      no.addEventListener('mouseenter', () => clearTimeout(cartaoTimer));
+      no.addEventListener('mouseleave', () => agendarFechar());
+    }
+  }
+  function agendarFechar() { clearTimeout(cartaoTimer); cartaoTimer = setTimeout(() => fecharCartao(), 280); }
+  function fecharCartao(agora) { clearTimeout(cartaoTimer); if (mapa.hasLayer(cartao)) mapa.closePopup(cartao); cartaoId = null; if (agora) cartaoTimer = null; }
+  mapa.on('popupclose', e => { if (e.popup === cartao) cartaoId = null; });
+  el.mapa.addEventListener('click', e => {
+    const b = e.target.closest('.cartao [data-acao]');
+    if (!b) return;
+    const p = estado.porId[b.closest('[data-id]').dataset.id];
+    if (p && b.dataset.acao === 'localizacao') copiarLocalizacao(p);
+  });
+
+  async function copiarLocalizacao(p) {
+    const texto = `${p.nome} — ${p.endereco ? p.endereco + ', ' : ''}${nomeCidade(p)}/${p.uf}\n${p.mapsUrl}`;
+    try { await navigator.clipboard.writeText(texto); toast('Localização copiada. Cole no WhatsApp ou onde quiser.'); }
+    catch (err) { prompt('Copie a localização:', p.mapsUrl); }
   }
 
   // ---------------------------------------------------------------- painel
@@ -337,10 +460,9 @@
   function renderChips() {
     const chips = [];
     if (estado.uf) chips.push(['uf', `${UF_NOME[estado.uf] || estado.uf}`, 'Estado']);
-    if (estado.mesoId) chips.push(['meso', mesoNomes[estado.mesoId] || 'Mesorregião', 'Mesorregião']);
     if (estado.cidade) {
-      const p = estado.postos.find(x => `${x.uf}|${x._cidade}` === estado.cidade);
-      chips.push(['cidade', p ? `${p.cidade}/${p.uf}` : 'Cidade', 'Cidade']);
+      const p = estado.postos.find(x => chaveCidade(x) === estado.cidade);
+      chips.push(['cidade', p ? `${nomeCidade(p)}/${p.uf}` : 'Cidade', 'Cidade']);
     }
     el.chips.innerHTML = chips.map(([k, nome, tipo]) =>
       `<button class="chip" type="button" data-remover="${k}" aria-label="Remover filtro ${esc(tipo)}: ${esc(nome)}"><span>${esc(tipo)}</span> ${esc(nome)}<svg class="ic"><use href="#i-fechar"/></svg></button>`).join('');
@@ -349,10 +471,37 @@
     const b = e.target.closest('[data-remover]');
     if (!b) return;
     const k = b.dataset.remover;
-    if (k === 'uf') definirFiltro({ uf: null, mesoId: null, cidade: null });
-    if (k === 'meso') definirFiltro({ mesoId: null, cidade: null });
+    if (k === 'uf') definirFiltro({ uf: null, cidade: null });
     if (k === 'cidade') definirFiltro({ cidade: null });
   });
+
+  /** Cidades cujo nome bate com a busca (lista de cidades do conjunto atual, sem a própria busca). */
+  function cidadesQueBatem(q) {
+    if (!q) return [];
+    const base = estado.postos.filter(p => (estado.periodo === 'tudo' || diasDesde(p.ultimo && p.ultimo.data) <= Number(estado.periodo)) && (!estado.uf || p.uf === estado.uf));
+    const grupos = agrupar(base, chaveCidade);
+    return [...grupos.entries()]
+      .map(([k, ps]) => ({ k, ps, n: ps[0]._cidade }))
+      .filter(c => c.n && (c.n.startsWith(q) || c.n.includes(' ' + q) || (q.length >= 3 && c.n.includes(q))))
+      .sort((a, b) => (b.n.startsWith(q) - a.n.startsWith(q)) || b.ps.length - a.ps.length || a.n.localeCompare(b.n));
+  }
+
+  function renderSugestoes() {
+    const q = norm(estado.busca);
+    if (estado.aba !== 'posto' || !q || estado.cidade) { el.sugestoes.innerHTML = ''; return; }
+    const cs = cidadesQueBatem(q).slice(0, 4);
+    el.sugestoes.innerHTML = cs.length ? `<span class="sugestoes-rotulo">Cidades</span>` + cs.map(c =>
+      `<button class="sugestao" type="button" data-cidade="${esc(c.k)}"><svg class="ic"><use href="#i-pino"/></svg>${realcar(c.ps[0].cidade, [q])}<span>/${esc(c.ps[0].uf)} · ${c.ps.length}</span></button>`).join('') : '';
+  }
+  el.sugestoes.addEventListener('click', e => {
+    const b = e.target.closest('[data-cidade]');
+    if (b) escolherCidade(b.dataset.cidade);
+  });
+  function escolherCidade(k) {
+    estado.busca = ''; el.busca.value = ''; el.buscaLimpar.hidden = true;
+    trocarAba('posto', true);
+    definirFiltro({ cidade: k });
+  }
 
   function renderResumo() {
     const n = estado.filtrados.length;
@@ -370,16 +519,16 @@
     return 14 + 86 * (v - f.min) / (f.max - f.min);
   }
 
-  function itemPosto(p) {
+  function itemPosto(p, termos) {
     const v = precoDe(p, estado.combustivel);
-    const info = p.precos && p.precos[estado.combustivel];
+    const info = p.precos[estado.combustivel];
     const inat = inativo(p);
     const dist = estado.usuario && p._temCoord ? `<span class="distancia">${km(distanciaKm(estado.usuario, p))}</span> · ` : '';
     const dias = diasDesde(p.ultimo && p.ultimo.data);
     return `<button class="item${inat ? ' inativo' : ''}" role="listitem" data-id="${esc(p.id)}" aria-current="${p.id === estado.selecionado}">
-      <span class="item-nome">${esc(p.nome)}${inat ? `<span class="carimbo">SEM USO ${dias}D</span>` : ''}</span>
+      <span class="item-nome">${realcar(p.nome, termos)}${inat ? `<span class="carimbo">SEM USO ${dias}D</span>` : ''}</span>
       <span class="item-preco"><span class="valor">${v === null ? '<small>sem</small>—' : `<small>R$</small>${preco(v)}`}</span><span class="quando">${info ? dataCurta(info.data) : COMBUSTIVEIS[estado.combustivel]}</span></span>
-      <span class="item-sub">${dist}${esc(p.cidade)}/${esc(p.uf)} · ${quando(p.ultimo && p.ultimo.data)}</span>
+      <span class="item-sub">${dist}${realcar(nomeCidade(p), termos)}/${esc(p.uf)} · ${quando(p.ultimo && p.ultimo.data)}</span>
       <span class="item-barra" aria-hidden="true"><i class="${nivel(v)}" style="width:${largura(v)}%"></i></span>
     </button>`;
   }
@@ -391,6 +540,11 @@
     else if (estado.ordem === 'nome') l.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
     else if (estado.ordem === 'distancia' && estado.usuario) l.sort((a, b) => (a._temCoord ? distanciaKm(estado.usuario, a) : 1e9) - (b._temCoord ? distanciaKm(estado.usuario, b) : 1e9));
     else l.sort((a, b) => ((b.ultimo.data + b.ultimo.hora) > (a.ultimo.data + a.ultimo.hora) ? 1 : -1));
+    // Com busca, o mais relevante vem primeiro; a ordem escolhida desempata
+    if (termosBusca().length && estado.ordem !== 'distancia') {
+      const pos = new Map(l.map((p, i) => [p.id, i]));
+      l.sort((a, b) => (b._pontos || 0) - (a._pontos || 0) || pos.get(a.id) - pos.get(b.id));
+    }
     return l;
   }
 
@@ -407,40 +561,39 @@
     return g;
   }
 
+  function semResultado(temFiltro) {
+    return `<div class="vazio"><strong>Nada encontrado</strong>
+      ${estado.busca ? `Nenhum resultado para “${esc(estado.busca)}”. Tente parte do nome, a cidade ou o estado.` : 'Nenhum abastecimento neste filtro.'}
+      ${temFiltro ? '<br><button class="botao" type="button" data-acao="limpar">Limpar busca e filtros</button>' : ''}</div>`;
+  }
+
   function renderLista() {
-    const lista = estado.filtrados;
-    if (!lista.length) {
-      const temFiltro = estado.busca || estado.uf || estado.cidade || estado.periodo !== 'tudo';
-      el.lista.innerHTML = `<div class="vazio"><strong>Nenhum posto encontrado</strong>
-        ${estado.busca ? `Nada corresponde a “${esc(estado.busca)}”.` : 'Nenhum abastecimento neste filtro.'}
-        ${temFiltro ? '<br><button class="botao" type="button" data-acao="limpar">Limpar filtros</button>' : ''}</div>`;
-      return;
-    }
+    const temFiltro = estado.busca || estado.uf || estado.cidade || estado.periodo !== 'tudo';
+    const q = norm(estado.busca);
     let html = '';
     if (estado.aba === 'posto') {
-      html = ordenar(lista).map(itemPosto).join('');
+      const lista = estado.filtrados;
+      html = lista.length ? ordenar(lista).map(p => itemPosto(p, termosBusca())).join('') : semResultado(temFiltro);
     } else if (estado.aba === 'cidade') {
-      const grupos = [...agrupar(lista, p => `${p.uf}|${p._cidade}`).entries()]
-        .sort((a, b) => b[1].length - a[1].length || a[1][0].cidade.localeCompare(b[1][0].cidade, 'pt-BR'));
-      html = grupos.map(([k, ps]) => `<button class="item item-grupo" role="listitem" data-cidade="${esc(k)}">
-          <span class="item-nome">${esc(ps[0].cidade)} <span style="color:var(--texto-3);font-weight:500">/ ${esc(ps[0].uf)}</span></span>
+      const cs = q ? cidadesQueBatem(q).map(c => [c.k, c.ps.filter(p => estado.filtrados.includes(p))]).filter(c => c[1].length)
+        : [...agrupar(estado.filtrados, chaveCidade).entries()].sort((a, b) => b[1].length - a[1].length || nomeCidade(a[1][0]).localeCompare(nomeCidade(b[1][0]), 'pt-BR'));
+      html = cs.length ? cs.map(([k, ps]) => {
+        const ativa = estado.cidade === k;
+        return `<button class="item item-grupo cidade${ativa ? ' ativa' : ''}" role="listitem" data-cidade="${esc(k)}" aria-current="${ativa}">
+          <span class="item-nome">${realcar(nomeCidade(ps[0]), q ? [q] : [])} <span class="item-uf">/ ${esc(ps[0].uf)}</span></span>
           <span class="item-preco faixa">${faixaTexto(ps)}</span>
-          <span class="item-sub">${plural(ps.length, 'posto', 'postos')} · ${esc(ps[0].mesorregiao)}</span>
-          <svg class="ic"><use href="#i-chevron"/></svg></button>`).join('');
+          <span class="item-sub">${plural(ps.length, 'posto', 'postos')} · ${COMBUSTIVEIS[estado.combustivel]}</span>
+          <svg class="ic"><use href="#i-chevron"/></svg></button>`;
+      }).join('') : semResultado(temFiltro);
     } else {
-      const ufs = [...agrupar(lista, p => p.uf).entries()].sort((a, b) => b[1].length - a[1].length);
-      html = ufs.map(([uf, ps]) => {
-        const mesos = [...agrupar(ps, p => p.mesorregiaoId || p.mesorregiao).entries()].sort((a, b) => b[1].length - a[1].length);
-        return `<div class="grupo-titulo"><span>${esc(UF_NOME[uf] || uf)}</span><span>${plural(ps.length, 'posto', 'postos')}</span></div>
-          <button class="item item-grupo uf" role="listitem" data-uf="${esc(uf)}">
-            <span class="item-nome">Todo o estado · ${esc(uf)}</span><span class="item-preco faixa">${faixaTexto(ps)}</span>
-            <span class="item-sub">${plural(mesos.length, 'mesorregião', 'mesorregiões')} · ${plural(new Set(ps.map(p => p._cidade)).size, 'cidade', 'cidades')}</span>
-            <svg class="ic"><use href="#i-chevron"/></svg></button>` +
-          mesos.map(([id, mp]) => `<button class="item item-grupo meso" role="listitem" data-uf="${esc(uf)}" data-meso="${esc(mp[0].mesorregiaoId || '')}">
-            <span class="item-nome">${esc(mp[0].mesorregiao)}</span><span class="item-preco faixa">${faixaTexto(mp)}</span>
-            <span class="item-sub">${plural(mp.length, 'posto', 'postos')} · ${plural(new Set(mp.map(p => p._cidade)).size, 'cidade', 'cidades')}</span>
-            <svg class="ic"><use href="#i-chevron"/></svg></button>`).join('');
-      }).join('');
+      const ufs = [...agrupar(estado.filtrados, p => p.uf).entries()]
+        .filter(([uf]) => !q || norm(`${uf} ${UF_NOME[uf] || ''}`).split(' ').some(w => w.startsWith(q)) || norm(UF_NOME[uf] || '').startsWith(q))
+        .sort((a, b) => b[1].length - a[1].length);
+      html = ufs.length ? ufs.map(([uf, ps]) => `<button class="item item-grupo uf" role="listitem" data-uf="${esc(uf)}" aria-current="${estado.uf === uf}">
+          <span class="item-nome">${realcar(UF_NOME[uf] || uf, q ? [q] : [])} <span class="item-uf">${esc(uf)}</span></span>
+          <span class="item-preco faixa">${faixaTexto(ps)}</span>
+          <span class="item-sub">${plural(ps.length, 'posto', 'postos')} · ${plural(new Set(ps.map(p => p._cidade)).size, 'cidade', 'cidades')}</span>
+          <svg class="ic"><use href="#i-chevron"/></svg></button>`).join('') : semResultado(temFiltro);
     }
     el.lista.innerHTML = html;
   }
@@ -451,26 +604,23 @@
     if (b.dataset.acao === 'limpar') {
       el.busca.value = ''; estado.busca = ''; el.buscaLimpar.hidden = true;
       marcarSeg('#seg-periodo', 'tudo'); estado.periodo = 'tudo';
-      definirFiltro({ uf: null, mesoId: null, cidade: null });
+      definirFiltro({ uf: null, cidade: null });
       return;
     }
     if (b.dataset.id) { selecionar(b.dataset.id, { centralizar: true }); return; }
-    if (b.dataset.cidade) {
-      trocarAba('posto', true);
-      definirFiltro({ cidade: b.dataset.cidade });
-      return;
-    }
+    if (b.dataset.cidade) { escolherCidade(b.dataset.cidade); return; }
     if (b.dataset.uf) {
-      const meso = b.dataset.meso ? Number(b.dataset.meso) || null : null;
+      estado.busca = ''; el.busca.value = ''; el.buscaLimpar.hidden = true;
       trocarAba('posto', true);
-      definirFiltro({ uf: b.dataset.uf, mesoId: meso, cidade: null });
+      definirFiltro({ uf: b.dataset.uf, cidade: null });
     }
   });
 
+  const PLACEHOLDER = { posto: 'Nome, cidade, endereço ou CNPJ', cidade: 'Digite o nome da cidade', estado: 'Digite o estado ou a sigla' };
   function trocarAba(aba, limparBusca) {
     estado.aba = aba;
     $$('.aba').forEach(b => b.setAttribute('aria-selected', String(b.dataset.aba === aba)));
-    el.busca.placeholder = aba === 'posto' ? 'Buscar posto, endereço ou CNPJ' : aba === 'cidade' ? 'Buscar cidade' : 'Buscar estado ou mesorregião';
+    el.busca.placeholder = PLACEHOLDER[aba];
     if (limparBusca && estado.busca) { estado.busca = ''; el.busca.value = ''; el.buscaLimpar.hidden = true; }
   }
   $$('.aba').forEach(b => b.addEventListener('click', () => { trocarAba(b.dataset.aba, false); atualizar(); }));
@@ -485,7 +635,18 @@
   el.busca.addEventListener('input', () => {
     el.buscaLimpar.hidden = !el.busca.value;
     clearTimeout(buscaTimer);
-    buscaTimer = setTimeout(() => { estado.busca = el.busca.value; atualizar({ ajustar: true }); }, 160);
+    buscaTimer = setTimeout(() => { estado.busca = el.busca.value; atualizar({ ajustar: estado.aba === 'posto' }); }, 140);
+  });
+  el.busca.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && el.busca.value) { e.stopPropagation(); el.buscaLimpar.click(); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    clearTimeout(buscaTimer);
+    estado.busca = el.busca.value;
+    atualizar({ ajustar: estado.aba === 'posto' });
+    const primeiro = el.lista.querySelector('button.item');
+    if (primeiro && estado.aba !== 'posto') primeiro.click();
+    else if (primeiro && estado.filtrados.length === 1) primeiro.click();
   });
   el.busca.addEventListener('focus', () => { if (ehCelular()) definirFolha('cheio'); });
   el.buscaLimpar.addEventListener('click', () => { el.busca.value = ''; estado.busca = ''; el.buscaLimpar.hidden = true; el.busca.focus(); atualizar({ ajustar: true }); });
@@ -512,9 +673,9 @@
   function renderLegenda() {
     const nome = COMBUSTIVEIS[estado.combustivel];
     el.legenda.innerHTML = estado.faixa ? `<strong>${nome}</strong>
-      <span class="amostra"><i style="background:var(--tag-baixo)"></i>Mais barato</span>
-      <span class="amostra"><i style="background:var(--tag-medio);border-color:var(--linha-forte)"></i>Na média</span>
-      <span class="amostra"><i style="background:var(--tag-alto)"></i>Mais caro</span>` : '';
+      <span class="amostra"><i class="baixo"></i>Mais barato</span>
+      <span class="amostra"><i class="medio"></i>Na média</span>
+      <span class="amostra"><i class="alto"></i>Mais caro</span>` : '';
   }
 
   // ---------------------------------------------------------------- seleção + detalhe
@@ -523,22 +684,17 @@
     estado.selecionado = id;
     [anterior, id].forEach(x => {
       const p = estado.porId[x], m = marcadores[x];
-      if (p && m) m.setIcon(iconeTag(p, x === id));
+      if (p && m) m.setIcon(iconePino(p, x === id));
     });
     $$('.item[data-id]').forEach(b => b.setAttribute('aria-current', String(b.dataset.id === id)));
     renderDetalhe();
     const p = estado.porId[id];
     if (p && p._temCoord && opcoes && opcoes.centralizar !== false) {
-      const m = marcadores[id];
-      const ir = () => {
-        // Desloca o centro para o posto não ficar atrás do painel de detalhes
-        const zoom = Math.min(Math.max(mapa.getZoom(), 13), 15);
-        const alvo = mapa.project([p.lat, p.lng], zoom);
-        // celular: a folha de detalhes ocupa até 56% da altura; o posto fica no centro da faixa visível
-        const desloc = ehCelular() ? L.point(0, Math.round(innerHeight * 0.56 / 2)) : L.point(195, 0);
-        mapa.setView(mapa.unproject(alvo.add(desloc), zoom), zoom, { animate: !(opcoes && opcoes.semAnimacao) });
-      };
-      ir();
+      // Desloca o centro para o posto não ficar atrás do painel de detalhes
+      const zoom = Math.min(Math.max(mapa.getZoom(), 13), 15);
+      const alvo = mapa.project([p.lat, p.lng], zoom);
+      const desloc = ehCelular() ? L.point(0, Math.round(innerHeight * 0.56 / 2)) : L.point(195, 0);
+      mapa.setView(mapa.unproject(alvo.add(desloc), zoom), zoom, { animate: !(opcoes && opcoes.semAnimacao) });
     }
     if (ehCelular()) definirFolha('espiar');
     escreverHash();
@@ -549,7 +705,7 @@
     estado.selecionado = null;
     el.detalhe.hidden = true;
     const p = estado.porId[id], m = marcadores[id];
-    if (p && m) m.setIcon(iconeTag(p, false));
+    if (p && m) m.setIcon(iconePino(p, false));
     $$('.item[data-id]').forEach(b => b.setAttribute('aria-current', 'false'));
     escreverHash();
   }
@@ -561,7 +717,7 @@
   }
 
   function blocoPreco(p, tipo) {
-    const info = p.precos && p.precos[tipo];
+    const info = p.precos[tipo];
     const ativo = tipo === estado.combustivel ? ' ativo' : '';
     if (!info) return `<div class="preco vazio-preco${ativo}"><div class="preco-nome">${COMBUSTIVEIS[tipo]}</div><div class="preco-valor">—</div><div class="preco-data">sem registro</div></div>`;
     let media = '<div class="preco-media">sem média 30d</div>';
@@ -589,35 +745,25 @@
         <h2 class="det-nome">${esc(p.nome)}</h2>
         <p class="det-razao">${esc(p.razao || '')}${p.cnpj ? ` · <span class="nowrap">CNPJ ${esc(cnpjFmt(p.cnpj))}</span>` : ''}</p>
         <div class="det-local"><svg class="ic"><use href="#i-pino"/></svg><div>
-          <b>${esc(p.endereco || 'Endereço não informado')}</b>${esc(p.cidade)}/${esc(p.uf)} · ${esc(p.mesorregiao)}${dist}
-          ${p._temCoord ? '' : '<br><span style="color:var(--acao-forte)">Sem coordenadas na Sisatec — busca pelo endereço no Google Maps.</span>'}
+          <b>${esc(p.endereco || 'Endereço não informado')}</b>${esc(nomeCidade(p))}/${esc(p.uf)}${dist}
+          ${p._temCoord ? '' : '<br><span class="det-aviso">Sem coordenadas na Sisatec. O link busca pelo endereço no Google Maps.</span>'}
         </div></div>
         <span class="det-status${inat ? ' inativo' : ''}">${inat ? `Sem uso há ${dias} dias` : `Último abastecimento ${quando(u.data)}`}</span>
       </div>
       <div class="det-corpo">
         <section class="det-secao"><h3>Último preço pago (R$/L)</h3>
-          <div class="precos">${['gasolina', 'dieselS10', 'arla'].map(t => blocoPreco(p, t)).join('')}</div>
+          <div class="precos">${Object.keys(COMBUSTIVEIS).map(t => blocoPreco(p, t)).join('')}</div>
         </section>
         <section class="det-secao"><h3>Último abastecimento</h3>
           <dl class="fatos">
             <div class="fato"><dt>Data</dt><dd>${dataBR(u.data)} ${esc(u.hora || '')}</dd></div>
-            <div class="fato"><dt>Serviço</dt><dd>${esc(nomeServico(u.combustivel))}</dd></div>
-            <div class="fato"><dt>Litros</dt><dd>${u.litros ? moeda(u.litros) + ' L' : '—'}</dd></div>
-            <div class="fato"><dt>Valor</dt><dd>${u.valor ? 'R$ ' + moeda(u.valor) : '—'}</dd></div>
-          </dl>
-        </section>
-        <section class="det-secao"><h3>Desde ${dataBR(p.totais && p.totais.primeiro)}</h3>
-          <dl class="fatos">
-            <div class="fato"><dt>Abastecimentos</dt><dd>${inteiro(p.totais ? p.totais.abastecimentos : 0)}</dd></div>
-            <div class="fato"><dt>Litros</dt><dd>${inteiro(p.totais ? p.totais.litros : 0)} L</dd></div>
-            <div class="fato largo"><dt>Valor total</dt><dd>R$ ${moeda(p.totais ? p.totais.valor : 0)}</dd></div>
-            ${p.outrosServicos && p.outrosServicos.length ? `<div class="fato largo"><dt>Outros serviços</dt><dd>${esc(p.outrosServicos.map(nomeServico).join(', '))}</dd></div>` : ''}
+            <div class="fato"><dt>Combustível</dt><dd>${esc(nomeServico(u.combustivel))}</dd></div>
           </dl>
         </section>
       </div>
       <div class="det-acoes">
         <a class="botao primario" href="${esc(p.rotaUrl || p.mapsUrl)}" target="_blank" rel="noopener"><svg class="ic"><use href="#i-rota"/></svg>${p.rotaUrl ? 'Como chegar' : 'Abrir no Google Maps'}</a>
-        <button class="botao" type="button" data-acao="copiar"><svg class="ic"><use href="#i-link"/></svg>Copiar link</button>
+        <button class="botao" type="button" data-acao="localizacao"><svg class="ic"><use href="#i-pino"/></svg>Gerar localização</button>
         <button class="botao" type="button" data-acao="compartilhar"><svg class="ic"><use href="#i-compartilhar"/></svg>Compartilhar</button>
       </div>`;
     el.detalhe.hidden = false;
@@ -629,14 +775,10 @@
     const p = estado.porId[estado.selecionado];
     if (b.dataset.acao === 'fechar') { fecharDetalhe(); return; }
     if (!p) return;
-    const textoMaps = `${p.nome} — ${p.endereco ? p.endereco + ', ' : ''}${p.cidade}/${p.uf}\n${p.mapsUrl}`;
-    if (b.dataset.acao === 'copiar') {
-      try { await navigator.clipboard.writeText(textoMaps); toast('Link do Google Maps copiado'); }
-      catch (err) { prompt('Copie o link:', p.mapsUrl); }
-    }
+    if (b.dataset.acao === 'localizacao') copiarLocalizacao(p);
     if (b.dataset.acao === 'compartilhar') {
       const v = precoDe(p, estado.combustivel);
-      const dados = { title: p.nome, text: `${p.nome} (${p.cidade}/${p.uf})${v !== null ? ` — ${COMBUSTIVEIS[estado.combustivel]} R$ ${preco(v)}` : ''}`, url: p.mapsUrl };
+      const dados = { title: p.nome, text: `${p.nome} (${nomeCidade(p)}/${p.uf})${v !== null ? ` — ${COMBUSTIVEIS[estado.combustivel]} R$ ${preco(v)}` : ''}`, url: p.mapsUrl };
       if (navigator.share) { try { await navigator.share(dados); } catch (err) { /* cancelado */ } }
       else {
         try { await navigator.clipboard.writeText(`${dados.text}\n${p.mapsUrl}\n${linkPosto(p)}`); toast('Texto para compartilhar copiado'); }
@@ -647,6 +789,7 @@
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (!el.captura.hidden) { sairCaptura(); return; }
+    if (mapa.hasLayer(cartao)) { fecharCartao(true); return; }
     if (!el.detalhe.hidden) fecharDetalhe();
   });
 
@@ -691,7 +834,7 @@
       if (Math.abs(dy) > 4) movido = true;
       el.painel.style.setProperty('--folha-h', `${Math.max(120, Math.min(innerHeight - 62, h0 + dy))}px`);
     };
-    const fim = e => {
+    const fim = () => {
       if (y0 === null) return;
       el.painel.classList.remove('arrastando');
       const h = el.painel.getBoundingClientRect().height;
@@ -712,6 +855,7 @@
   let cap = null;
   function entrarCaptura() {
     if (!window.htmlToImage) { toast('A biblioteca de imagem não carregou. Verifique a conexão.'); return; }
+    fecharCartao(true);
     el.captura.hidden = false;
     el.capturaDica.hidden = false;
     el.capturaRet.hidden = true;
@@ -770,8 +914,7 @@
   function descricaoFiltros() {
     const partes = [COMBUSTIVEIS[estado.combustivel]];
     if (estado.uf) partes.push(UF_NOME[estado.uf] || estado.uf);
-    if (estado.mesoId) partes.push(mesoNomes[estado.mesoId] || '');
-    if (estado.cidade) { const p = estado.postos.find(x => `${x.uf}|${x._cidade}` === estado.cidade); if (p) partes.push(`${p.cidade}/${p.uf}`); }
+    if (estado.cidade) { const p = estado.postos.find(x => chaveCidade(x) === estado.cidade); if (p) partes.push(`${nomeCidade(p)}/${p.uf}`); }
     partes.push(estado.periodo === 'tudo' ? 'todo o período' : `últimos ${estado.periodo} dias`);
     if (estado.busca) partes.push(`busca “${estado.busca}”`);
     return partes.filter(Boolean).join(' · ');
@@ -792,7 +935,7 @@
       const mapaCanvas = await window.htmlToImage.toCanvas(el.mapa, {
         pixelRatio: escala,
         backgroundColor: corFundo,
-        filter: n => !(n.classList && (n.classList.contains('leaflet-control-container')))
+        filter: n => !(n.classList && (n.classList.contains('leaflet-control-container') || n.classList.contains('leaflet-popup-pane')))
       });
       const cab = 64 * escala, rod = 58 * escala;
       const out = document.createElement('canvas');
@@ -823,7 +966,7 @@
       // rodapé com legenda
       const yR = out.height - rod + 24 * escala;
       let xr = pad;
-      [['--tag-baixo', 'Mais barato'], ['--tag-medio', 'Na média'], ['--tag-alto', 'Mais caro']].forEach(([v, t]) => {
+      [['--tag-baixo', 'Mais barato'], ['--pino-medio', 'Na média'], ['--tag-alto', 'Mais caro']].forEach(([v, t]) => {
         c.fillStyle = css.getPropertyValue(v).trim();
         c.fillRect(xr, yR - 9 * escala, 14 * escala, 10 * escala);
         c.strokeStyle = css.getPropertyValue('--linha-forte').trim(); c.lineWidth = escala;
@@ -835,10 +978,8 @@
       });
       const agora = new Date();
       const geradoTxt = agora.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', ' às');
-      const carimbo = `Imagem gerada em ${geradoTxt} · ${estado.atualizadoTexto || ''}`;
-      // segunda linha: carimbo de data/origem dos dados
       c.fillStyle = css.getPropertyValue('--texto-3').trim();
-      c.fillText(carimbo, pad, yR + 20 * escala);
+      c.fillText(`Imagem gerada em ${geradoTxt} · ${estado.atualizadoTexto || ''}`, pad, yR + 20 * escala);
       const blob = await new Promise(res => out.toBlob(res, 'image/png'));
       const a = document.createElement('a');
       const stamp = `${agora.getFullYear()}${String(agora.getMonth() + 1).padStart(2, '0')}${String(agora.getDate()).padStart(2, '0')}-${String(agora.getHours()).padStart(2, '0')}${String(agora.getMinutes()).padStart(2, '0')}`;
@@ -863,7 +1004,6 @@
     const p = new URLSearchParams();
     if (estado.selecionado) p.set('posto', estado.selecionado);
     if (estado.uf) p.set('uf', estado.uf);
-    if (estado.mesoId) p.set('meso', estado.mesoId);
     if (estado.cidade) p.set('cidade', estado.cidade);
     if (estado.combustivel !== CFG.COMBUSTIVEL_PADRAO) p.set('c', estado.combustivel);
     if (estado.periodo !== 'tudo') p.set('p', estado.periodo);
@@ -877,13 +1017,11 @@
     const p = new URLSearchParams(location.hash.slice(1));
     const uf = p.get('uf');
     estado.uf = uf && UF_CODIGO[uf] ? uf : null;
-    estado.mesoId = p.get('meso') ? Number(p.get('meso')) : null;
     estado.cidade = p.get('cidade') || null;
     if (p.get('c') && COMBUSTIVEIS[p.get('c')]) estado.combustivel = p.get('c');
     if (['30', '90'].includes(p.get('p'))) estado.periodo = p.get('p');
     marcarSeg('#seg-combustivel', estado.combustivel);
     marcarSeg('#seg-periodo', estado.periodo);
-    if (estado.uf) carregarMalhaMeso(estado.uf);
     const id = p.get('posto');
     if (id && estado.porId[id]) setTimeout(() => { mapa.stop(); selecionar(id, { centralizar: true, semAnimacao: true }); }, 450);
   }
@@ -895,6 +1033,7 @@
   if (CFG.LOGO) el.logo.src = CFG.LOGO;
   el.logo.addEventListener('error', () => { el.logo.classList.add('sem-logo'); $('.marca-divisor').hidden = true; });
   marcarSeg('#seg-combustivel', estado.combustivel);
+  trocarAba('posto', false);
   carregarMalhaUFs();
   carregarDados();
   addEventListener('resize', () => mapa.invalidateSize());
