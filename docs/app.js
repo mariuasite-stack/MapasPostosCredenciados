@@ -15,7 +15,22 @@
     claro: { base: ESRI + 'World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', ref: ESRI + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}' },
     escuro: { base: ESRI + 'World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', ref: ESRI + 'World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}' }
   };
-  const ATRIB = 'Mapa &copy; <a href="https://www.esri.com">Esri</a>, HERE, Garmin, &copy; OpenStreetMap · Malhas IBGE';
+  const ESRI_SRV = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+  /** Fundos do mapa: "mapa" (cinza, segue o tema) e "satelite" (imagem + ruas + nomes). */
+  const FUNDOS = {
+    mapa: tema => ({
+      base: TILES[tema].base, refs: [TILES[tema].ref], nativo: 16, escurecer: tema === 'escuro',
+      atrib: 'Mapa &copy; <a href="https://www.esri.com">Esri</a>, HERE, Garmin, &copy; OpenStreetMap · Malhas IBGE',
+      atribTexto: 'Mapa © Esri, HERE, Garmin, © OpenStreetMap'
+    }),
+    satelite: () => ({
+      base: ESRI_SRV + 'World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      refs: [ESRI_SRV + 'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', ESRI_SRV + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
+      nativo: 18, escurecer: false,
+      atrib: 'Imagens &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics · Malhas IBGE',
+      atribTexto: 'Imagens © Esri, Maxar, Earthstar Geographics · Rótulos © Esri'
+    })
+  };
   const ZOOM_ROTULOS = 9;
 
   const $ = (s, el) => (el || document).querySelector(s);
@@ -121,7 +136,7 @@
     el.btnTema.innerHTML = `<svg class="ic"><use href="#i-${escuro ? 'sol' : 'lua'}"/></svg>`;
     el.btnTema.setAttribute('aria-label', escuro ? 'Usar tema claro' : 'Usar tema escuro');
     $('meta[name="theme-color"]').setAttribute('content', escuro ? '#202428' : '#FFFFFF');
-    if (camadaBase) { camadaBase.setUrl(TILES[tema].base); camadaRef.setUrl(TILES[tema].ref); }
+    if (typeof aplicarFundo === 'function' && mapa) aplicarFundo();
     if (camadaCidades) camadaCidades.setStyle(estiloCidade);
   }
   el.btnTema.addEventListener('click', () => {
@@ -137,10 +152,22 @@
   mapa.attributionControl.setPrefix(false);
   const temaInicial = document.documentElement.dataset.theme === 'escuro' ? 'escuro' : 'claro';
   let camadaCidades = null;
-  let camadaBase = L.tileLayer(TILES[temaInicial].base, { attribution: ATRIB, maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' }).addTo(mapa);
   mapa.createPane('rotulos').style.zIndex = 450;
   mapa.getPane('rotulos').style.pointerEvents = 'none';
-  let camadaRef = L.tileLayer(TILES[temaInicial].ref, { pane: 'rotulos', maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' }).addTo(mapa);
+  let fundo = ls.get('mapa-fundo') === 'mapa' ? 'mapa' : 'satelite';
+  let camadasFundo = [];
+  const temaAtual = () => (document.documentElement.dataset.theme === 'escuro' ? 'escuro' : 'claro');
+  function aplicarFundo() {
+    camadasFundo.forEach(c => mapa.removeLayer(c));
+    const f = FUNDOS[fundo](temaAtual());
+    camadasFundo = [L.tileLayer(f.base, { attribution: f.atrib, maxZoom: 19, maxNativeZoom: f.nativo, crossOrigin: 'anonymous' })]
+      .concat(f.refs.map(u => L.tileLayer(u, { pane: 'rotulos', maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' })));
+    camadasFundo.forEach(c => c.addTo(mapa));
+    el.mapa.classList.toggle('satelite', fundo === 'satelite');
+    $$('[data-fundo]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.fundo === fundo)));
+  }
+  function definirFundo(f) { fundo = f; ls.set('mapa-fundo', f); aplicarFundo(); }
+  document.addEventListener('click', e => { const b = e.target.closest('[data-fundo]'); if (b) definirFundo(b.dataset.fundo); });
   aplicarTema(temaInicial);
 
   mapa.createPane('malhas').style.zIndex = 350;
@@ -1017,7 +1044,7 @@
   }
 
   // ---------------------------------------------------------------- mapa por raio (imagem 1920×1080)
-  const RAIO_W = 1920, RAIO_H = 1080, RAIO_CAB = 96, RAIO_ROD = 60;
+  const RAIO_W = 1920, RAIO_H = 1080, RAIO_CAB = 100, RAIO_ROD = 56;
   const RAIO_MAX = 500;
   const raio = { ativo: false, centro: null, km: 50, nomeCentro: '', circulo: null, marcaCentro: null };
   const elR = {
@@ -1145,16 +1172,16 @@
 
   const CAMINHO_PINO = typeof Path2D !== 'undefined' ? new Path2D('M15 38.5S26.5 25.6 26.5 15.6a11.5 11.5 0 0 0-23 0C3.5 25.6 15 38.5 15 38.5Z') : null;
 
-  function retanguloLivre(r, ocupados, area) {
-    if (r.x < area.x || r.y < area.y || r.x + r.w > area.x + area.w || r.y + r.h > area.y + area.h) return Infinity;
-    let sobra = 0;
+  function sobreposicao(r, ocupados) {
+    let soma = 0;
     for (const o of ocupados) {
       const w = Math.min(r.x + r.w, o.x + o.w) - Math.max(r.x, o.x);
       const h = Math.min(r.y + r.h, o.y + o.h) - Math.max(r.y, o.y);
-      if (w > 0 && h > 0) sobra += w * h;
+      if (w > 0 && h > 0) soma += w * h;
     }
-    return sobra;
+    return soma;
   }
+  const dentro = (r, a) => r.x >= a.x && r.y >= a.y && r.x + r.w <= a.x + a.w && r.y + r.h <= a.y + a.h;
 
   function encurtar(c, texto, max) {
     if (c.measureText(texto).width <= max) return texto;
@@ -1163,206 +1190,322 @@
     return t.trimEnd() + '…';
   }
 
+  function carregarImagem(url) {
+    return new Promise(res => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const t = setTimeout(() => res(null), 20000);
+      img.onload = () => { clearTimeout(t); res(img); };
+      img.onerror = () => { clearTimeout(t); res(null); };
+      img.src = url;
+    });
+  }
+
+  /**
+   * Desenha o fundo (blocos 256 px do Esri) direto no canvas, numa área W×H
+   * centrada em `centro` com zoom fracionário `z`. Devolve a projeção usada.
+   */
+  async function desenharFundo(c, area, centro, z, f) {
+    const crs = L.CRS.EPSG3857;
+    const zt = Math.max(1, Math.min(f.nativo, Math.ceil(z)));
+    const escala = Math.pow(2, z - zt);
+    const ts = 256 * escala;
+    const pc = crs.latLngToPoint(centro, z);
+    const ox = pc.x - area.w / 2, oy = pc.y - area.h / 2;
+    const n = Math.pow(2, zt);
+    const x0 = Math.floor(ox / ts), x1 = Math.floor((ox + area.w) / ts);
+    const y0 = Math.max(0, Math.floor(oy / ts)), y1 = Math.min(n - 1, Math.floor((oy + area.h) / ts));
+    const urls = [f.base].concat(f.refs);
+    const pedidos = [];
+    urls.forEach((u, camada) => {
+      // rótulos e ruas não passam de 16 no Esri; acima disso, amplia o bloco de 16
+      const ztc = camada === 0 ? zt : Math.min(zt, 16);
+      const fat = Math.pow(2, zt - ztc);
+      for (let ty = Math.floor(y0 / fat); ty <= Math.floor(y1 / fat); ty++) {
+        for (let tx = Math.floor(x0 / fat); tx <= Math.floor(x1 / fat); tx++) {
+          const txw = ((tx % (n / fat)) + n / fat) % (n / fat);
+          const url = u.replace('{z}', ztc).replace('{y}', ty).replace('{x}', txw);
+          pedidos.push(carregarImagem(url).then(img => ({ img, camada, x: tx * ts * fat - ox, y: ty * ts * fat - oy, t: ts * fat })));
+        }
+      }
+    });
+    const blocos = await Promise.all(pedidos);
+    const falhas = blocos.filter(b => !b.img && b.camada === 0).length;
+    c.save();
+    c.beginPath(); c.rect(area.x, area.y, area.w, area.h); c.clip();
+    c.fillStyle = '#9AA3A6'; c.fillRect(area.x, area.y, area.w, area.h);
+    if (f.escurecer) c.filter = 'brightness(.68) contrast(1.08)';
+    [0, 1, 2].forEach(camada => blocos.filter(b => b.img && b.camada === camada).forEach(b => {
+      if (camada === 1 && f.escurecer) c.filter = 'none';
+      c.drawImage(b.img, area.x + b.x, area.y + b.y, b.t + .5, b.t + .5);
+    }));
+    c.filter = 'none';
+    c.restore();
+    return {
+      falhas, total: blocos.filter(b => b.camada === 0).length,
+      ponto: ll => { const q = crs.latLngToPoint(L.latLng(ll), z); return { x: area.x + q.x - ox, y: area.y + q.y - oy }; }
+    };
+  }
+
   async function gerarImagemRaio() {
-    const lista = postosNoRaio();
-    if (!lista.length) { toast('Nenhum posto dentro deste raio'); return; }
-    if (!window.htmlToImage) { toast('A biblioteca de imagem não carregou. Verifique a conexão.'); return; }
+    const postos = postosNoRaio();
+    if (!postos.length) { toast('Nenhum posto dentro deste raio'); return; }
     const conteudoBotao = elR.gerar.innerHTML;
     elR.gerar.setAttribute('aria-disabled', 'true');
     elR.gerar.innerHTML = '<svg class="ic girando"><use href="#i-raio"/></svg>Gerando imagem…';
     const css = getComputedStyle(document.documentElement);
     const cor = v => css.getPropertyValue(v).trim();
-    const tema = document.documentElement.dataset.theme === 'escuro' ? 'escuro' : 'claro';
-    const mapaH = RAIO_H - RAIO_CAB - RAIO_ROD;
-    const caixa = document.createElement('div');
-    caixa.className = 'raio-render';
-    caixa.style.cssText = `position:fixed;left:-${RAIO_W + 400}px;top:0;width:${RAIO_W}px;height:${mapaH}px;`;
-    document.body.appendChild(caixa);
-    let mapaImg = null;
+    const tema = temaAtual();
+    const sat = fundo === 'satelite';
+    const f = FUNDOS[fundo](tema);
+    const comb = estado.combustivel, nomeComb = COMBUSTIVEIS[comb];
     try {
-      await Promise.all([document.fonts.ready, document.fonts.load('600 16px Barlow'), document.fonts.load('700 16px "Barlow Semi Condensed"')]);
-      const centro = L.latLng(raio.centro.lat, raio.centro.lng);
-      mapaImg = L.map(caixa, { zoomControl: false, attributionControl: false, zoomSnap: 0.25, fadeAnimation: false, zoomAnimation: false, markerZoomAnimation: false, inertia: false });
-      mapaImg.fitBounds(centro.toBounds(raio.km * 2000), { padding: [56, 56], animate: false, maxZoom: 16 });
-      const base = L.tileLayer(TILES[tema].base, { maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' });
-      const ref = L.tileLayer(TILES[tema].ref, { maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' });
-      const carregou = Promise.all([base, ref].map(t => new Promise(res => { t.once('load', res); setTimeout(res, 20000); })));
-      base.addTo(mapaImg); ref.addTo(mapaImg);
-      await carregou;
-      await espera(400);
-      const fundo = await window.htmlToImage.toCanvas(caixa, { width: RAIO_W, height: mapaH, pixelRatio: 1, backgroundColor: cor('--sup-2') });
-
+      await Promise.all([document.fonts.ready, document.fonts.load('600 16px Barlow'), document.fonts.load('700 16px Barlow'), document.fonts.load('700 16px "Barlow Semi Condensed"')]);
+      const W = RAIO_W, H = RAIO_H, CAB = RAIO_CAB, ROD = RAIO_ROD, LISTA = 500;
+      const area = { x: 0, y: CAB, w: W - LISTA, h: H - CAB - ROD };
       const out = document.createElement('canvas');
-      out.width = RAIO_W; out.height = RAIO_H;
+      out.width = W; out.height = H;
       const c = out.getContext('2d');
-      c.fillStyle = cor('--sup'); c.fillRect(0, 0, RAIO_W, RAIO_H);
-      c.drawImage(fundo, 0, RAIO_CAB, RAIO_W, mapaH);
-      const pt = ll => { const q = mapaImg.latLngToContainerPoint(ll); return { x: q.x, y: q.y + RAIO_CAB }; };
+      c.fillStyle = cor('--sup'); c.fillRect(0, 0, W, H);
 
-      // área fora do raio esmaecida + contorno do raio
-      const pc = pt(centro);
-      const pn = pt(L.latLng(centro.lat + raio.km / 110.574, centro.lng));
-      const rpx = Math.abs(pc.y - pn.y);
+      // zoom que encaixa o círculo na área do mapa, com folga
+      const centro = L.latLng(raio.centro.lat, raio.centro.lng);
+      const bb = centro.toBounds(raio.km * 2000);
+      const p0 = L.CRS.EPSG3857.latLngToPoint(bb.getNorthWest(), 0), p1 = L.CRS.EPSG3857.latLngToPoint(bb.getSouthEast(), 0);
+      const folga = 70;
+      const z = Math.min(18, Math.log2(Math.min((area.w - folga * 2) / (p1.x - p0.x), (area.h - folga * 2) / (p1.y - p0.y))));
+      const proj = await desenharFundo(c, area, centro, z, f);
+      if (proj.falhas === proj.total) throw new Error('Os blocos do mapa não carregaram');
+
+      // ordem da lista = numeração: mais barato primeiro, depois mais perto do centro
+      const faixa = calcularFaixa(postos);
+      const itens = postos.map(p => ({ p, v: precoDe(p, comb), d: p._distRaio, n: 0 }))
+        .sort((a, b) => ((a.v ?? 1e9) - (b.v ?? 1e9)) || a.d - b.d);
+      itens.forEach((it, i) => { it.n = i + 1; it.nivel = nivel(it.v, faixa); const q = proj.ponto([it.p.lat, it.p.lng]); it.rx = q.x; it.ry = q.y; });
+
+      // raio: fora esmaecido, contorno, centro e rótulo de km
+      const pc = proj.ponto(centro);
+      const rpx = Math.abs(pc.y - proj.ponto([centro.lat + raio.km / 110.574, centro.lng]).y);
       c.save();
-      c.beginPath(); c.rect(0, RAIO_CAB, RAIO_W, mapaH); c.clip();
-      c.beginPath(); c.rect(0, RAIO_CAB, RAIO_W, mapaH); c.arc(pc.x, pc.y, rpx, 0, Math.PI * 2, true);
-      c.fillStyle = tema === 'escuro' ? 'rgba(10, 12, 15, .45)' : 'rgba(245, 246, 248, .55)';
+      c.beginPath(); c.rect(area.x, area.y, area.w, area.h); c.clip();
+      c.beginPath(); c.rect(area.x, area.y, area.w, area.h); c.arc(pc.x, pc.y, rpx, 0, Math.PI * 2, true);
+      c.fillStyle = sat ? 'rgba(8, 14, 16, .55)' : tema === 'escuro' ? 'rgba(10, 12, 15, .5)' : 'rgba(245, 246, 248, .6)';
       c.fill('evenodd');
       c.beginPath(); c.arc(pc.x, pc.y, rpx, 0, Math.PI * 2);
-      c.setLineDash([12, 9]); c.lineWidth = 3; c.strokeStyle = cor('--teal'); c.stroke();
+      c.lineWidth = 6; c.strokeStyle = 'rgba(0, 0, 0, .35)'; c.stroke();
+      c.setLineDash([14, 10]); c.lineWidth = 3; c.strokeStyle = sat ? '#FFFFFF' : cor('--teal'); c.stroke();
       c.setLineDash([]);
-      // centro
-      c.beginPath(); c.arc(pc.x, pc.y, 7, 0, Math.PI * 2); c.fillStyle = cor('--sup'); c.fill();
-      c.lineWidth = 3; c.strokeStyle = cor('--teal'); c.stroke();
-      // rótulo do raio no topo do círculo
-      const rotRaio = `${inteiro(raio.km)} km`;
-      c.font = '700 17px "Barlow Semi Condensed", Barlow, sans-serif';
-      const wr = c.measureText(rotRaio).width + 20;
-      const yr = Math.max(RAIO_CAB + 8, pc.y - rpx - 14);
-      c.fillStyle = cor('--teal');
-      c.beginPath(); c.roundRect(pc.x - wr / 2, yr, wr, 28, 14); c.fill();
-      c.fillStyle = '#FFFFFF'; c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.fillText(rotRaio, pc.x, yr + 14.5);
+      c.beginPath(); c.arc(pc.x, pc.y, 8, 0, Math.PI * 2); c.fillStyle = '#FFFFFF'; c.fill();
+      c.lineWidth = 3.5; c.strokeStyle = cor('--teal'); c.stroke();
+      c.beginPath(); c.arc(pc.x, pc.y, 2.5, 0, Math.PI * 2); c.fillStyle = cor('--teal'); c.fill();
+      const rotKm = `${inteiro(raio.km)} km`;
+      c.font = '700 18px "Barlow Semi Condensed", Barlow, sans-serif';
+      const wk = c.measureText(rotKm).width + 24;
+      const yk = Math.max(area.y + 10, pc.y - rpx - 15);
+      c.fillStyle = cor('--tag-baixo');
+      c.beginPath(); c.roundRect(pc.x - wk / 2, yk, wk, 30, 15); c.fill();
+      c.fillStyle = cor('--tag-baixo-tx'); c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(rotKm, pc.x, yk + 15.5);
       c.textAlign = 'left';
       c.restore();
 
-      // pinos
-      const faixa = calcularFaixa(lista);
-      const S = 1.2;
-      const itens = lista.map(p => {
-        const q = pt(L.latLng(p.lat, p.lng));
-        return { p, x: q.x, y: q.y, v: precoDe(p, estado.combustivel) };
-      }).sort((a, b) => a.y - b.y);
-      const corPino = n => n === 'baixo' ? cor('--tag-baixo') : n === 'alto' ? cor('--tag-alto') : n === 'sem' ? cor('--sup-3') : cor('--pino-medio');
+      // posição dos pinos: postos colados são afastados em anel, com linha até o ponto real
+      const S = 1.3, PW = 30 * S, PH = 40 * S, MIN = 30;
+      const colocados = [];
       itens.forEach(it => {
-        const n = nivel(it.v, faixa);
+        let x = it.rx, y = it.ry;
+        const livre = (px, py) => colocados.every(o => Math.hypot(o.x - px, o.y - py) >= MIN);
+        if (!livre(x, y)) {
+          let achou = false;
+          for (let anel = 1; anel <= 4 && !achou; anel++) {
+            const r = anel * 34, passos = 8 * anel;
+            for (let k = 0; k < passos; k++) {
+              const ang = -Math.PI / 2 + (k / passos) * Math.PI * 2;
+              const nx = it.rx + Math.cos(ang) * r, ny = it.ry + Math.sin(ang) * r;
+              if (livre(nx, ny) && nx > area.x + PW && nx < area.x + area.w - PW && ny > area.y + PH && ny < area.y + area.h - 8) { x = nx; y = ny; achou = true; break; }
+            }
+          }
+        }
+        it.x = x; it.y = y; it.deslocado = x !== it.rx || y !== it.ry;
+        colocados.push({ x, y });
+      });
+
+      const corPino = n => n === 'baixo' ? cor('--tag-baixo') : n === 'alto' ? cor('--tag-alto') : n === 'sem' ? '#C9D0D2' : cor('--pino-medio');
+      const corNum = n => n === 'baixo' ? cor('--tag-baixo') : n === 'alto' ? '#B4441B' : '#142023';
+      // linhas guia dos pinos deslocados
+      itens.filter(it => it.deslocado).forEach(it => {
+        c.beginPath(); c.moveTo(it.rx, it.ry); c.lineTo(it.x, it.y);
+        c.lineWidth = 3; c.strokeStyle = 'rgba(0, 0, 0, .45)'; c.stroke();
+        c.lineWidth = 1.5; c.strokeStyle = '#FFFFFF'; c.stroke();
+        c.beginPath(); c.arc(it.rx, it.ry, 4, 0, Math.PI * 2); c.fillStyle = '#FFFFFF'; c.fill();
+        c.lineWidth = 1.5; c.strokeStyle = 'rgba(0, 0, 0, .5)'; c.stroke();
+      });
+      // pinos numerados (de cima para baixo, os de baixo por cima)
+      [...itens].sort((a, b) => a.y - b.y).forEach(it => {
         c.save();
         c.translate(it.x - 15 * S, it.y - 39 * S);
         c.scale(S, S);
-        if (inativo(it.p)) c.globalAlpha = .6;
-        c.shadowColor = 'rgba(0, 0, 0, .3)'; c.shadowBlur = 5; c.shadowOffsetY = 2;
-        c.fillStyle = corPino(n); c.fill(CAMINHO_PINO);
+        if (inativo(it.p)) c.globalAlpha = .7;
+        c.shadowColor = 'rgba(0, 0, 0, .45)'; c.shadowBlur = 6; c.shadowOffsetY = 2;
+        c.fillStyle = corPino(it.nivel); c.fill(CAMINHO_PINO);
         c.shadowColor = 'transparent';
-        c.lineWidth = 1; c.strokeStyle = n === 'sem' ? cor('--texto-3') : 'rgba(0, 0, 0, .25)'; c.stroke(CAMINHO_PINO);
-        c.beginPath(); c.arc(15, 15.4, 4.6, 0, Math.PI * 2); c.fillStyle = n === 'sem' ? cor('--texto-3') : '#FFFFFF'; c.fill();
+        c.lineWidth = 1.4; c.strokeStyle = '#FFFFFF'; c.stroke(CAMINHO_PINO);
+        c.beginPath(); c.arc(15, 15.2, 8.6, 0, Math.PI * 2); c.fillStyle = '#FFFFFF'; c.fill();
         c.restore();
+        c.font = `700 ${it.n > 99 ? 12 : 15}px "Barlow Semi Condensed", Barlow, sans-serif`;
+        c.fillStyle = corNum(it.nivel); c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(String(it.n), it.x, it.y - 39 * S + 15.6 * S);
+        c.textAlign = 'left';
       });
 
-      // rótulos: nome + preço, sem sobrepor outros rótulos nem pinos
-      const area = { x: 6, y: RAIO_CAB + 6, w: RAIO_W - 12, h: mapaH - 12 };
-      const ocupados = itens.map(it => ({ x: it.x - 15 * S, y: it.y - 40 * S, w: 30 * S, h: 40 * S }));
-      const fNome = '600 15px Barlow, sans-serif';
-      const fPreco = '700 16px "Barlow Semi Condensed", Barlow, sans-serif';
-      const corPreco = n => n === 'baixo' ? cor('--destaque') : n === 'alto' ? cor('--acao-forte') : cor('--texto-2');
-      const H = 28, topoPino = 40 * S;
+      // nome em cima do posto, só onde cabe sem sobrepor nada
+      const areaRot = { x: area.x + 6, y: area.y + 6, w: area.w - 12, h: area.h - 12 };
+      const ocupados = itens.map(it => ({ x: it.x - PW / 2 - 2, y: it.y - PH - 2, w: PW + 4, h: PH + 4 }));
+      ocupados.push({ x: pc.x - wk / 2, y: Math.max(area.y + 10, pc.y - rpx - 15), w: wk, h: 30 });
+      const RH = 26, fNome = '600 14px Barlow, sans-serif';
+      let semRotulo = 0;
       itens.forEach(it => {
         c.font = fNome;
-        const nome = encurtar(c, it.p.nome, 260);
-        const wNome = c.measureText(nome).width;
-        c.font = fPreco;
-        const txtPreco = it.v === null ? '' : `R$ ${preco(it.v)}`;
-        const wPreco = txtPreco ? c.measureText(txtPreco).width + 10 : 0;
-        const W = 10 + wNome + wPreco + 10;
+        const nome = encurtar(c, it.p.nome, 230);
+        const RW = c.measureText(nome).width + 18;
+        const topo = it.y - PH;
         const cands = [
-          { x: it.x - W / 2, y: it.y - topoPino - 6 - H },
-          { x: it.x + 16, y: it.y - topoPino - H + 6 },
-          { x: it.x - 16 - W, y: it.y - topoPino - H + 6 },
-          { x: it.x + 20, y: it.y - topoPino / 2 - H / 2 - 4 },
-          { x: it.x - 20 - W, y: it.y - topoPino / 2 - H / 2 - 4 },
-          { x: it.x - W / 2, y: it.y + 6 },
-          { x: it.x - W / 2, y: it.y - topoPino - 12 - H * 2 },
-          { x: it.x - W / 2, y: it.y + 12 + H }
-        ].map(r => Object.assign(r, { w: W, h: H }));
-        let melhor = null, menor = Infinity;
-        for (const r of cands) {
-          const s = retanguloLivre(r, ocupados, area);
-          if (s < menor) { menor = s; melhor = r; }
-          if (s === 0) break;
-        }
-        if (!melhor) melhor = cands[0];
-        // leva o rótulo para dentro da área se tudo estourou a borda
-        melhor.x = Math.max(area.x, Math.min(area.x + area.w - W, melhor.x));
-        melhor.y = Math.max(area.y, Math.min(area.y + area.h - H, melhor.y));
-        ocupados.push(melhor);
-        it.rot = { r: melhor, nome, wNome, txtPreco, n: nivel(it.v, faixa) };
-      });
-      // linhas guia para rótulos afastados do pino
-      itens.forEach(it => {
-        const r = it.rot.r;
-        const cx = Math.max(r.x, Math.min(r.x + r.w, it.x)), cy = Math.max(r.y, Math.min(r.y + r.h, it.y - topoPino / 2));
-        if (Math.hypot(cx - it.x, cy - (it.y - topoPino / 2)) > topoPino * 1.1) {
-          c.beginPath(); c.moveTo(it.x, it.y - topoPino / 2); c.lineTo(cx, cy);
-          c.lineWidth = 1.5; c.strokeStyle = cor('--texto-3'); c.stroke();
-        }
-      });
-      itens.forEach(it => {
-        const { r, nome, wNome, txtPreco, n } = it.rot;
+          { x: it.x - RW / 2, y: topo - 5 - RH },
+          { x: it.x + PW / 2 + 2, y: topo - RH + 8 },
+          { x: it.x - PW / 2 - 2 - RW, y: topo - RH + 8 },
+          { x: it.x + PW / 2 + 4, y: it.y - PH / 2 - RH / 2 - 4 },
+          { x: it.x - PW / 2 - 4 - RW, y: it.y - PH / 2 - RH / 2 - 4 },
+          { x: it.x - RW / 2, y: it.y + 4 }
+        ].map(r => Object.assign(r, { w: RW, h: RH }));
+        const r = cands.find(q => dentro(q, areaRot) && !sobreposicao(q, ocupados));
+        if (!r) { semRotulo++; return; }
+        ocupados.push(r);
         c.save();
-        c.shadowColor = 'rgba(0, 0, 0, .18)'; c.shadowBlur = 6; c.shadowOffsetY = 1;
-        c.fillStyle = cor('--sup');
+        c.shadowColor = 'rgba(0, 0, 0, .35)'; c.shadowBlur = 8; c.shadowOffsetY = 2;
+        c.fillStyle = 'rgba(255, 255, 255, .97)';
         c.beginPath(); c.roundRect(r.x, r.y, r.w, r.h, 6); c.fill();
         c.restore();
-        c.lineWidth = 1; c.strokeStyle = cor('--linha-forte');
-        c.beginPath(); c.roundRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1, 6); c.stroke();
-        c.textBaseline = 'middle';
-        c.font = fNome; c.fillStyle = inativo(it.p) ? cor('--texto-3') : cor('--texto');
-        c.fillText(nome, r.x + 10, r.y + H / 2 + 1);
-        if (txtPreco) {
-          c.font = fPreco; c.fillStyle = corPreco(n);
-          c.fillText(txtPreco, r.x + 10 + wNome + 10, r.y + H / 2 + 1);
-        }
+        c.font = fNome; c.fillStyle = '#142023'; c.textBaseline = 'middle';
+        c.fillText(nome, r.x + 9, r.y + RH / 2 + 1);
       });
 
-      // atribuição do mapa base
+      // atribuição do fundo
       c.font = '500 12px Barlow, sans-serif';
-      const atrib = 'Mapa © Esri, HERE, Garmin, © OpenStreetMap';
-      const wa = c.measureText(atrib).width + 14;
-      c.fillStyle = cor('--sup'); c.globalAlpha = .85;
-      c.fillRect(RAIO_W - wa, RAIO_CAB + mapaH - 20, wa, 20);
-      c.globalAlpha = 1; c.fillStyle = cor('--texto-3'); c.textBaseline = 'middle';
-      c.fillText(atrib, RAIO_W - wa + 7, RAIO_CAB + mapaH - 10);
+      const wa = c.measureText(f.atribTexto).width + 16;
+      c.fillStyle = 'rgba(255, 255, 255, .82)';
+      c.fillRect(area.x + area.w - wa, area.y + area.h - 22, wa, 22);
+      c.fillStyle = '#455458'; c.textBaseline = 'middle';
+      c.fillText(f.atribTexto, area.x + area.w - wa + 8, area.y + area.h - 11);
+
+      // lista lateral
+      const lx = W - LISTA, ly = CAB;
+      c.fillStyle = cor('--sup'); c.fillRect(lx, ly, LISTA, area.h);
+      c.fillStyle = cor('--linha'); c.fillRect(lx, ly, 1, area.h);
+      c.textBaseline = 'alphabetic';
+      c.font = '700 13px Barlow, sans-serif'; c.fillStyle = cor('--texto-3');
+      c.fillText('POSTOS NO RAIO · MENOR PREÇO PRIMEIRO', lx + 28, ly + 34);
+      c.font = '700 13px Barlow, sans-serif';
+      const tit2 = `${nomeComb} R$/L`;
+      c.textAlign = 'right'; c.fillText(tit2.toUpperCase(), W - 28, ly + 34); c.textAlign = 'left';
+      const topoLista = ly + 50, fimLista = ly + area.h - 16;
+      const disp = fimLista - topoLista;
+      let alt = Math.floor(disp / itens.length);
+      let cabe = itens.length;
+      if (alt < 30) { alt = 30; cabe = Math.floor((disp - 30) / alt); }
+      alt = Math.min(alt, 58);
+      const duasLinhas = alt >= 46;
+      itens.slice(0, cabe).forEach((it, i) => {
+        const y = topoLista + i * alt;
+        if (i) { c.fillStyle = cor('--linha'); c.fillRect(lx + 28, y, LISTA - 56, 1); }
+        const cy = y + alt / 2;
+        const rb = duasLinhas ? 14 : 12;
+        c.beginPath(); c.arc(lx + 28 + rb, cy, rb, 0, Math.PI * 2); c.fillStyle = corPino(it.nivel); c.fill();
+        c.font = `700 ${duasLinhas ? 15 : 13}px "Barlow Semi Condensed", Barlow, sans-serif`;
+        c.fillStyle = it.nivel === 'baixo' ? cor('--tag-baixo-tx') : it.nivel === 'alto' ? cor('--tag-alto-tx') : it.nivel === 'sem' ? '#142023' : '#FFFFFF';
+        c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(String(it.n), lx + 28 + rb, cy + 1); c.textAlign = 'left';
+        const tx = lx + 28 + rb * 2 + 12;
+        const precoTxt = it.v === null ? '—' : preco(it.v);
+        c.font = `700 ${duasLinhas ? 24 : 18}px "Barlow Semi Condensed", Barlow, sans-serif`;
+        const wp = c.measureText(precoTxt).width;
+        c.fillStyle = it.v === null ? cor('--texto-3') : it.nivel === 'baixo' ? cor('--destaque') : it.nivel === 'alto' ? cor('--acao-forte') : cor('--texto');
+        c.textAlign = 'right';
+        c.fillText(precoTxt, W - 28, duasLinhas ? cy - 4 : cy + 1);
+        if (duasLinhas && it.v !== null) {
+          c.font = '500 12px Barlow, sans-serif'; c.fillStyle = cor('--texto-3');
+          c.fillText(dataBR(it.p.precos[comb].data), W - 28, cy + 15);
+        }
+        c.textAlign = 'left';
+        const maxNome = W - 28 - wp - 16 - tx;
+        c.font = `600 ${duasLinhas ? 16 : 14}px Barlow, sans-serif`; c.fillStyle = inativo(it.p) ? cor('--texto-3') : cor('--texto');
+        c.fillText(encurtar(c, it.p.nome, maxNome), tx, duasLinhas ? cy - 6 : cy + 1);
+        if (duasLinhas) {
+          c.font = '500 13px Barlow, sans-serif'; c.fillStyle = cor('--texto-3');
+          const sub = `${nomeCidade(it.p)}/${it.p.uf} · ${km(it.d)} do centro${inativo(it.p) ? ' · sem uso' : ''}`;
+          c.fillText(encurtar(c, sub, maxNome), tx, cy + 13);
+        }
+      });
+      if (cabe < itens.length) {
+        c.font = '600 14px Barlow, sans-serif'; c.fillStyle = cor('--acao-forte');
+        c.fillText(`+ ${plural(itens.length - cabe, 'posto', 'postos')} fora da lista. Reduza o raio para ver todos.`, lx + 28, fimLista);
+      }
 
       // cabeçalho
-      c.fillStyle = cor('--sup'); c.fillRect(0, 0, RAIO_W, RAIO_CAB);
+      c.fillStyle = cor('--sup'); c.fillRect(0, 0, W, CAB);
       let x = 40;
       if (el.logo.complete && el.logo.naturalWidth && !el.logo.classList.contains('sem-logo')) {
         const h = 48, w = h * el.logo.naturalWidth / el.logo.naturalHeight;
-        c.drawImage(el.logo, x, (RAIO_CAB - h) / 2, w, h);
+        c.drawImage(el.logo, x, (CAB - h) / 2, w, h);
         x += w + 24;
-        c.fillStyle = cor('--linha-forte'); c.fillRect(x, 26, 1, RAIO_CAB - 52);
+        c.fillStyle = cor('--linha-forte'); c.fillRect(x, 26, 1, CAB - 52);
         x += 24;
       }
       c.textBaseline = 'alphabetic';
       c.fillStyle = cor('--texto'); c.font = '600 28px Barlow, sans-serif';
       c.fillText(CFG.TITULO, x, 44);
-      const nomeComb = COMBUSTIVEIS[estado.combustivel];
       const resumo = [`Raio de ${inteiro(raio.km)} km a partir de ${raio.nomeCentro.replace(/^perto de /, '')}`,
-        plural(lista.length, 'posto', 'postos'),
-        faixa ? `${nomeComb} de R$ ${preco(faixa.min)} a R$ ${preco(faixa.max)}` : `sem preço de ${nomeComb}`,
         estado.periodo === 'tudo' ? 'todo o período' : `últimos ${estado.periodo} dias`].join('  ·  ');
       c.fillStyle = cor('--texto-2'); c.font = '500 18px Barlow, sans-serif';
       c.fillText(resumo, x, 72);
-      c.fillStyle = cor('--teal'); c.fillRect(0, RAIO_CAB - 3, RAIO_W * .72, 3);
-      c.fillStyle = cor('--laranja'); c.fillRect(RAIO_W * .72, RAIO_CAB - 3, RAIO_W * .28, 3);
+      // números-chave à direita
+      const chave = [[inteiro(itens.length), itens.length === 1 ? 'posto' : 'postos'],
+        [faixa ? preco(faixa.min) : '—', `menor ${nomeComb}`], [faixa ? preco(faixa.max) : '—', `maior ${nomeComb}`]];
+      let xc = W - 40;
+      [...chave].reverse().forEach(([num, rot]) => {
+        c.font = '500 13px Barlow, sans-serif';
+        const wr = c.measureText(rot).width;
+        c.font = '700 30px "Barlow Semi Condensed", Barlow, sans-serif';
+        const wn = c.measureText(num).width;
+        const wcol = Math.max(wr, wn);
+        c.textAlign = 'right';
+        c.fillStyle = cor('--texto'); c.fillText(num, xc, 48);
+        c.font = '500 13px Barlow, sans-serif'; c.fillStyle = cor('--texto-3'); c.fillText(rot, xc, 70);
+        c.textAlign = 'left';
+        xc -= wcol + 40;
+      });
+      c.fillStyle = cor('--teal'); c.fillRect(0, CAB - 3, W * .72, 3);
+      c.fillStyle = cor('--laranja'); c.fillRect(W * .72, CAB - 3, W * .28, 3);
 
       // rodapé
-      const yR = RAIO_H - RAIO_ROD;
-      c.fillStyle = cor('--sup'); c.fillRect(0, yR, RAIO_W, RAIO_ROD);
-      c.fillStyle = cor('--linha'); c.fillRect(0, yR, RAIO_W, 1);
+      const yR = H - ROD;
+      c.fillStyle = cor('--sup'); c.fillRect(0, yR, W, ROD);
+      c.fillStyle = cor('--linha'); c.fillRect(0, yR, W, 1);
       c.textBaseline = 'middle';
       let xr = 40;
       c.font = '700 15px Barlow, sans-serif'; c.fillStyle = cor('--texto');
-      c.fillText(nomeComb, xr, yR + RAIO_ROD / 2); xr += c.measureText(nomeComb).width + 22;
-      [['--tag-baixo', 'Mais barato'], ['--pino-medio', 'Na média'], ['--tag-alto', 'Mais caro']].forEach(([v, t]) => {
-        c.beginPath(); c.arc(xr + 7, yR + RAIO_ROD / 2, 7, 0, Math.PI * 2); c.fillStyle = cor(v); c.fill();
+      c.fillText(nomeComb, xr, yR + ROD / 2); xr += c.measureText(nomeComb).width + 22;
+      [['baixo', 'Mais barato'], ['medio', 'Na média'], ['alto', 'Mais caro']].forEach(([n, t]) => {
+        c.beginPath(); c.arc(xr + 8, yR + ROD / 2, 8, 0, Math.PI * 2); c.fillStyle = corPino(n); c.fill();
         c.font = '500 15px Barlow, sans-serif'; c.fillStyle = cor('--texto-2');
-        c.fillText(t, xr + 20, yR + RAIO_ROD / 2); xr += 20 + c.measureText(t).width + 26;
+        c.fillText(t, xr + 22, yR + ROD / 2); xr += 22 + c.measureText(t).width + 26;
       });
+      if (semRotulo) {
+        c.font = '500 14px Barlow, sans-serif'; c.fillStyle = cor('--texto-3');
+        c.fillText('O número no pino corresponde à lista ao lado.', xr + 8, yR + ROD / 2);
+      }
       const agora = new Date();
       const geradoTxt = agora.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', ' às');
-      const carimbo = `Imagem gerada em ${geradoTxt}  ·  ${estado.atualizadoTexto || ''}`;
       c.font = '500 14px Barlow, sans-serif'; c.fillStyle = cor('--texto-3'); c.textAlign = 'right';
-      c.fillText(carimbo, RAIO_W - 40, yR + RAIO_ROD / 2);
+      c.fillText(`Imagem gerada em ${geradoTxt}  ·  ${estado.atualizadoTexto || ''}`, W - 40, yR + ROD / 2);
       c.textAlign = 'left';
 
       const blob = await new Promise(res => out.toBlob(res, 'image/png'));
@@ -1373,13 +1516,11 @@
       a.download = `mapa-raio-${raio.km}km-${slug}-${stamp}.png`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-      toast(`Imagem 1920×1080 baixada com ${plural(lista.length, 'posto', 'postos')}`);
+      toast(proj.falhas ? `Imagem baixada. ${proj.falhas} blocos do mapa não carregaram.` : `Imagem 1920×1080 baixada com ${plural(itens.length, 'posto', 'postos')}`);
     } catch (err) {
       console.error(err);
-      toast('Não foi possível gerar a imagem. Tente um raio menor ou verifique a conexão.');
+      toast('Não foi possível gerar a imagem: ' + (err && err.message ? err.message : 'erro desconhecido'));
     } finally {
-      if (mapaImg) mapaImg.remove();
-      caixa.remove();
       elR.gerar.innerHTML = conteudoBotao;
       elR.gerar.setAttribute('aria-disabled', String(!postosNoRaio().length));
     }

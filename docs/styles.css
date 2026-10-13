@@ -400,6 +400,29 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
 .leaflet-container { font-family: var(--f-ui); background: var(--sup-2); }
 :root[data-theme="escuro"] .leaflet-container { background: #2C2E30; }
 :root[data-theme="escuro"] .leaflet-tile-pane { filter: brightness(.68) contrast(1.08); }
+:root[data-theme="escuro"] #mapa.satelite .leaflet-tile-pane { filter: none; }
+
+/* Mapa | Satélite */
+.fundo-seg {
+  display: inline-flex; padding: 3px; gap: 2px;
+  height: 42px;
+  background: var(--sup);
+  border: 1px solid var(--linha);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra-2);
+}
+.fundo-seg button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 11px 0 9px;
+  border: 0; border-radius: 5px;
+  background: none;
+  font-size: 14px; font-weight: 600; color: var(--texto-2);
+  transition: background .15s, color .15s;
+}
+.fundo-seg button .ic { width: 18px; height: 18px; }
+.fundo-seg button:hover { color: var(--texto); background: var(--sup-2); }
+.fundo-seg button[aria-checked="true"] { background: var(--tag-baixo); color: var(--tag-baixo-tx); }
+#mapa.satelite .leaflet-tooltip.rotulo-cidade { color: #FFFFFF; text-shadow: 0 0 2px #000, 0 0 5px rgba(0,0,0,.8), 0 0 10px rgba(0,0,0,.6); }
 
 .mapa-acoes { position: absolute; top: 14px; right: 14px; z-index: 900; display: flex; gap: 8px; transition: right .35s var(--ease); }
 .mapa-area:has(.detalhe:not([hidden])) .mapa-acoes,
@@ -764,6 +787,9 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
   .raio-km-linha .segmentado button { height: 36px; }
   .mapa-area:has(.raio:not([hidden])) .legenda { display: none; }
   #btn-raio span { display: none; }
+  .fundo-seg { height: 46px; border-radius: 23px; padding: 4px; }
+  .fundo-seg button { border-radius: 19px; padding: 0 10px; }
+  .fundo-seg button span { display: none; }
   #btn-raio { width: 46px; padding: 0; justify-content: center; }
 
   .detalhe {
