@@ -522,6 +522,57 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
 
 .voce { width: 18px; height: 18px; border-radius: 50%; background: #2F7BEA; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(47,123,234,.25), var(--sombra-1); }
 
+/* Mapa por raio */
+.raio {
+  position: absolute; top: 14px; left: 14px; z-index: 1000;
+  width: 404px;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px;
+  background: var(--sup);
+  border: 1px solid var(--linha);
+  border-radius: 12px;
+  box-shadow: var(--sombra-2);
+  animation: entrar-raio .3s var(--ease);
+}
+@keyframes entrar-raio { from { opacity: 0; transform: translateY(-8px); } }
+.raio-cabeca h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.raio-cabeca p { margin: 2px 0 0; font-size: 13px; color: var(--texto-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.raio-campo { display: flex; flex-direction: column; gap: 6px; }
+.raio-campo > span { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--texto-3); }
+.raio-campo select {
+  height: 40px; width: 100%;
+  padding: 0 32px 0 12px;
+  border: 1px solid var(--linha-forte); border-radius: var(--raio);
+  background: var(--sup) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235F6D71' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center;
+  appearance: none;
+  font-size: 15px;
+}
+.raio-campo select:focus-visible { border-color: var(--teal); box-shadow: 0 0 0 3px var(--destaque-suave); outline: none; }
+.raio-km-linha { display: flex; gap: 8px; align-items: stretch; }
+.raio-km-linha .segmentado { flex: 1; }
+.raio-km-linha .segmentado button { font-family: var(--f-num); font-variant-numeric: tabular-nums; font-size: 15px; }
+.raio-km {
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--linha-forte); border-radius: var(--raio);
+  background: var(--sup);
+  font-size: 13px; color: var(--texto-3);
+}
+.raio-km:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px var(--destaque-suave); }
+.raio-km input {
+  width: 46px; border: 0; outline: 0; background: none; text-align: right;
+  font-family: var(--f-num); font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 700; color: var(--texto);
+  -moz-appearance: textfield;
+}
+.raio-km input::-webkit-outer-spin-button, .raio-km input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.raio-rodape { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding-top: 12px; border-top: 1px solid var(--linha); }
+.raio-rodape p { margin: 0; font-size: 14px; color: var(--texto-2); }
+.raio-rodape p b { font-family: var(--f-num); font-size: 18px; color: var(--texto); }
+.raio-rodape .primario { grid-column: 1 / -1; height: 46px; font-size: 15px; }
+.raio-centro { width: 16px; height: 16px; border-radius: 50%; background: var(--sup); border: 3px solid var(--teal); box-shadow: var(--sombra-1); }
+#mapa.modo-raio.leaflet-grab { cursor: crosshair; }
+.ic.girando { animation: girar 1s linear infinite; }
+
 /* Legenda */
 .legenda {
   position: absolute; left: 14px; bottom: 24px; z-index: 900;
@@ -708,6 +759,12 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
   .leaflet-top.leaflet-left { display: none; }
   .legenda { left: 10px; right: auto; top: 10px; bottom: auto; gap: 8px; padding: 6px 10px; font-size: 11px; }
   .legenda strong { display: none; }
+  .raio { left: 10px; right: 10px; top: 10px; width: auto; padding: 12px; gap: 10px; max-height: calc(100% - 220px); overflow-y: auto; }
+  .raio-cabeca p { white-space: normal; }
+  .raio-km-linha .segmentado button { height: 36px; }
+  .mapa-area:has(.raio:not([hidden])) .legenda { display: none; }
+  #btn-raio span { display: none; }
+  #btn-raio { width: 46px; padding: 0; justify-content: center; }
 
   .detalhe {
     position: fixed; left: 0; right: 0; bottom: 0; top: auto;

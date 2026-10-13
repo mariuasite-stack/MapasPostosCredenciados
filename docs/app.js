@@ -85,6 +85,7 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.toast.classList.remove('visivel'), 2800);
   }
+  const espera = ms => new Promise(r => setTimeout(r, ms));
   const ehCelular = () => matchMedia('(max-width: 760px)').matches;
   const temHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
   const precoDe = (p, tipo) => (p.precos && p.precos[tipo]) ? p.precos[tipo].ultimo : null;
@@ -335,8 +336,8 @@
     const q = f => vals.length ? vals[Math.min(vals.length - 1, Math.floor(f * vals.length))] : null;
     return { min: Math.min(...todos), max: Math.max(...todos), p33: q(1 / 3), p67: q(2 / 3), n: todos.length };
   }
-  function nivel(v) {
-    const f = estado.faixa;
+  function nivel(v, faixa) {
+    const f = faixa || estado.faixa;
     if (v === null || !f) return 'sem';
     if (f.p33 === null || f.min === f.max) return 'medio';
     if (v <= f.p33) return 'baixo';
@@ -361,7 +362,8 @@
     renderLista();
     renderLegenda();
     if (camadaCidades) camadaCidades.setStyle(estiloCidade);
-    if (opcoes.ajustar) ajustarMapa();
+    if (raio.ativo) desenharRaio(false);
+    if (opcoes.ajustar && !raio.ativo) ajustarMapa();
     escreverHash();
   }
 
@@ -631,17 +633,31 @@
     n.focus(); n.click();
   });
 
-  let buscaTimer;
+  // Busca dinâmica: cada tecla atualiza lista e mapa; campo vazio volta ao início
+  let buscaQuadro = 0;
+  function resetarBusca() {
+    cancelAnimationFrame(buscaQuadro);
+    el.busca.value = ''; el.buscaLimpar.hidden = true;
+    estado.busca = '';
+    definirFiltro({ uf: null, cidade: null });
+  }
   el.busca.addEventListener('input', () => {
-    el.buscaLimpar.hidden = !el.busca.value;
-    clearTimeout(buscaTimer);
-    buscaTimer = setTimeout(() => { estado.busca = el.busca.value; atualizar({ ajustar: estado.aba === 'posto' }); }, 140);
+    const v = el.busca.value;
+    el.buscaLimpar.hidden = !v;
+    if (!v.trim()) { resetarBusca(); return; }
+    cancelAnimationFrame(buscaQuadro);
+    buscaQuadro = requestAnimationFrame(() => {
+      estado.busca = v;
+      // Uma busca nova procura em todas as cidades, não só na escolhida antes
+      if (estado.cidade) estado.cidade = null;
+      atualizar({ ajustar: estado.aba === 'posto' });
+    });
   });
   el.busca.addEventListener('keydown', e => {
     if (e.key === 'Escape' && el.busca.value) { e.stopPropagation(); el.buscaLimpar.click(); return; }
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    clearTimeout(buscaTimer);
+    cancelAnimationFrame(buscaQuadro);
     estado.busca = el.busca.value;
     atualizar({ ajustar: estado.aba === 'posto' });
     const primeiro = el.lista.querySelector('button.item');
@@ -649,7 +665,7 @@
     else if (primeiro && estado.filtrados.length === 1) primeiro.click();
   });
   el.busca.addEventListener('focus', () => { if (ehCelular()) definirFolha('cheio'); });
-  el.buscaLimpar.addEventListener('click', () => { el.busca.value = ''; estado.busca = ''; el.buscaLimpar.hidden = true; el.busca.focus(); atualizar({ ajustar: true }); });
+  el.buscaLimpar.addEventListener('click', () => { resetarBusca(); el.busca.focus(); });
 
   function marcarSeg(sel, valor) { $$(`${sel} button`).forEach(b => b.setAttribute('aria-checked', String(b.dataset.valor === valor))); }
   function ligarSeg(sel, campo) {
@@ -789,6 +805,7 @@
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (!el.captura.hidden) { sairCaptura(); return; }
+    if (raio.ativo) { sairRaio(); return; }
     if (mapa.hasLayer(cartao)) { fecharCartao(true); return; }
     if (!el.detalhe.hidden) fecharDetalhe();
   });
@@ -856,6 +873,7 @@
   function entrarCaptura() {
     if (!window.htmlToImage) { toast('A biblioteca de imagem não carregou. Verifique a conexão.'); return; }
     fecharCartao(true);
+    if (raio.ativo) sairRaio();
     el.captura.hidden = false;
     el.capturaDica.hidden = false;
     el.capturaRet.hidden = true;
@@ -995,6 +1013,375 @@
       toast('Não foi possível gerar a imagem. Tente uma área menor.');
     } finally {
       botao.removeAttribute('aria-disabled');
+    }
+  }
+
+  // ---------------------------------------------------------------- mapa por raio (imagem 1920×1080)
+  const RAIO_W = 1920, RAIO_H = 1080, RAIO_CAB = 96, RAIO_ROD = 60;
+  const RAIO_MAX = 500;
+  const raio = { ativo: false, centro: null, km: 50, nomeCentro: '', circulo: null, marcaCentro: null };
+  const elR = {
+    painel: $('#raio'), cidade: $('#raio-cidade'), km: $('#raio-km'), contagem: $('#raio-contagem'),
+    gerar: $('#raio-gerar'), dica: $('#raio-dica'), btn: $('#btn-raio')
+  };
+
+  const noPeriodo = p => estado.periodo === 'tudo' || diasDesde(p.ultimo && p.ultimo.data) <= Number(estado.periodo);
+  function postosNoRaio() {
+    if (!raio.centro) return [];
+    return estado.postos
+      .filter(p => p._temCoord && noPeriodo(p))
+      .map(p => Object.assign(p, { _distRaio: distanciaKm(raio.centro, p) }))
+      .filter(p => p._distRaio <= raio.km);
+  }
+
+  function opcoesCidadesRaio() {
+    const cs = [...agrupar(estado.postos.filter(p => p._temCoord && p.cidade), chaveCidade).entries()]
+      .sort((a, b) => nomeCidade(a[1][0]).localeCompare(nomeCidade(b[1][0]), 'pt-BR'));
+    const atual = elR.cidade.value;
+    elR.cidade.innerHTML = '<option value="">Escolha a cidade central</option>'
+      + (estado.usuario ? '<option value="@voce">Minha localização</option>' : '')
+      + cs.map(([k, ps]) => `<option value="${esc(k)}">${esc(nomeCidade(ps[0]))}/${esc(ps[0].uf)} (${ps.length})</option>`).join('');
+    elR.cidade.value = atual;
+  }
+
+  function centroDaCidade(k) {
+    const ps = estado.postos.filter(p => chaveCidade(p) === k && p._temCoord);
+    const id = ps[0] && Number(ps[0].cidadeId);
+    let c = null;
+    if (camadaCidades && id) camadaCidades.eachLayer(l => { if (Number(l.feature.properties.codarea) === id) c = l.getBounds().getCenter(); });
+    if (c) return { lat: c.lat, lng: c.lng };
+    return { lat: ps.reduce((s, p) => s + p.lat, 0) / ps.length, lng: ps.reduce((s, p) => s + p.lng, 0) / ps.length };
+  }
+
+  /** Nome para um ponto clicado: a cidade do posto mais próximo (até 25 km) ou a coordenada. */
+  function nomePerto(pt) {
+    let melhor = null, d = Infinity;
+    estado.postos.forEach(p => { if (p._temCoord && p.cidade) { const x = distanciaKm(pt, p); if (x < d) { d = x; melhor = p; } } });
+    if (melhor && d <= 25) return `perto de ${nomeCidade(melhor)}/${melhor.uf}`;
+    return `${pt.lat.toFixed(4).replace('.', ',')}, ${pt.lng.toFixed(4).replace('.', ',')}`;
+  }
+
+  function desenharRaio(enquadrar) {
+    if (raio.circulo) { mapa.removeLayer(raio.circulo); raio.circulo = null; }
+    if (raio.marcaCentro) { mapa.removeLayer(raio.marcaCentro); raio.marcaCentro = null; }
+    const lista = postosNoRaio();
+    elR.gerar.setAttribute('aria-disabled', String(!lista.length));
+    if (!raio.centro) {
+      elR.contagem.innerHTML = 'Defina o centro';
+      elR.dica.textContent = 'Escolha a cidade ou clique no mapa';
+      return;
+    }
+    elR.dica.textContent = raio.nomeCentro;
+    elR.contagem.innerHTML = lista.length ? `<b>${inteiro(lista.length)}</b> ${lista.length === 1 ? 'posto' : 'postos'} no raio` : 'Nenhum posto no raio';
+    raio.circulo = L.circle([raio.centro.lat, raio.centro.lng], {
+      radius: raio.km * 1000, color: corTeal(), weight: 2, dashArray: '6 5', fillColor: corTeal(), fillOpacity: .06, interactive: false
+    }).addTo(mapa);
+    raio.marcaCentro = L.marker([raio.centro.lat, raio.centro.lng], {
+      icon: L.divIcon({ className: 'tag-ancora', html: '<div class="raio-centro"></div>', iconSize: [16, 16] }), interactive: false, keyboard: false
+    }).addTo(mapa);
+    if (enquadrar) {
+      const pad = ehCelular() ? { paddingTopLeft: [20, 230], paddingBottomRight: [20, 200] } : { paddingTopLeft: [440, 40], paddingBottomRight: [40, 40] };
+      mapa.fitBounds(raio.circulo.getBounds(), Object.assign({ animate: true }, pad));
+    }
+  }
+
+  function definirKm(v, enquadrar) {
+    const n = Math.round(Number(String(v).replace(',', '.')));
+    raio.km = Math.max(1, Math.min(RAIO_MAX, isNaN(n) ? 50 : n));
+    elR.km.value = raio.km;
+    marcarSeg('#seg-raio', String(raio.km));
+    desenharRaio(enquadrar);
+  }
+
+  function entrarRaio() {
+    fecharCartao(true);
+    if (!el.captura.hidden) sairCaptura();
+    raio.ativo = true;
+    opcoesCidadesRaio();
+    if (!raio.centro && estado.cidade) {
+      raio.centro = centroDaCidade(estado.cidade);
+      const p = estado.postos.find(x => chaveCidade(x) === estado.cidade);
+      raio.nomeCentro = p ? `${nomeCidade(p)}/${p.uf}` : '';
+      elR.cidade.value = estado.cidade;
+    }
+    elR.painel.hidden = false;
+    elR.btn.setAttribute('aria-pressed', 'true');
+    el.mapa.classList.add('modo-raio');
+    if (ehCelular()) definirFolha('espiar');
+    definirKm(raio.km, true);
+  }
+  function sairRaio() {
+    raio.ativo = false;
+    elR.painel.hidden = true;
+    elR.btn.setAttribute('aria-pressed', 'false');
+    el.mapa.classList.remove('modo-raio');
+    if (raio.circulo) { mapa.removeLayer(raio.circulo); raio.circulo = null; }
+    if (raio.marcaCentro) { mapa.removeLayer(raio.marcaCentro); raio.marcaCentro = null; }
+  }
+  elR.btn.addEventListener('click', () => (raio.ativo ? sairRaio() : entrarRaio()));
+  $('#raio-cancelar').addEventListener('click', sairRaio);
+  mapa.on('click', e => {
+    if (!raio.ativo) return;
+    raio.centro = { lat: e.latlng.lat, lng: e.latlng.lng };
+    raio.nomeCentro = nomePerto(raio.centro);
+    elR.cidade.value = '';
+    desenharRaio(false);
+  });
+  elR.cidade.addEventListener('change', () => {
+    const k = elR.cidade.value;
+    if (!k) return;
+    if (k === '@voce' && estado.usuario) { raio.centro = Object.assign({}, estado.usuario); raio.nomeCentro = 'sua localização'; }
+    else {
+      raio.centro = centroDaCidade(k);
+      const p = estado.postos.find(x => chaveCidade(x) === k);
+      raio.nomeCentro = p ? `${nomeCidade(p)}/${p.uf}` : '';
+    }
+    desenharRaio(true);
+  });
+  $('#seg-raio').addEventListener('click', e => { const b = e.target.closest('button'); if (b) definirKm(b.dataset.valor, true); });
+  elR.km.addEventListener('input', () => { if (elR.km.value !== '') definirKm(elR.km.value, false); });
+  elR.km.addEventListener('change', () => definirKm(elR.km.value, true));
+  elR.gerar.addEventListener('click', () => { if (elR.gerar.getAttribute('aria-disabled') !== 'true') gerarImagemRaio(); });
+
+  const CAMINHO_PINO = typeof Path2D !== 'undefined' ? new Path2D('M15 38.5S26.5 25.6 26.5 15.6a11.5 11.5 0 0 0-23 0C3.5 25.6 15 38.5 15 38.5Z') : null;
+
+  function retanguloLivre(r, ocupados, area) {
+    if (r.x < area.x || r.y < area.y || r.x + r.w > area.x + area.w || r.y + r.h > area.y + area.h) return Infinity;
+    let sobra = 0;
+    for (const o of ocupados) {
+      const w = Math.min(r.x + r.w, o.x + o.w) - Math.max(r.x, o.x);
+      const h = Math.min(r.y + r.h, o.y + o.h) - Math.max(r.y, o.y);
+      if (w > 0 && h > 0) sobra += w * h;
+    }
+    return sobra;
+  }
+
+  function encurtar(c, texto, max) {
+    if (c.measureText(texto).width <= max) return texto;
+    let t = texto;
+    while (t.length > 4 && c.measureText(t + '…').width > max) t = t.slice(0, -1);
+    return t.trimEnd() + '…';
+  }
+
+  async function gerarImagemRaio() {
+    const lista = postosNoRaio();
+    if (!lista.length) { toast('Nenhum posto dentro deste raio'); return; }
+    if (!window.htmlToImage) { toast('A biblioteca de imagem não carregou. Verifique a conexão.'); return; }
+    const conteudoBotao = elR.gerar.innerHTML;
+    elR.gerar.setAttribute('aria-disabled', 'true');
+    elR.gerar.innerHTML = '<svg class="ic girando"><use href="#i-raio"/></svg>Gerando imagem…';
+    const css = getComputedStyle(document.documentElement);
+    const cor = v => css.getPropertyValue(v).trim();
+    const tema = document.documentElement.dataset.theme === 'escuro' ? 'escuro' : 'claro';
+    const mapaH = RAIO_H - RAIO_CAB - RAIO_ROD;
+    const caixa = document.createElement('div');
+    caixa.className = 'raio-render';
+    caixa.style.cssText = `position:fixed;left:-${RAIO_W + 400}px;top:0;width:${RAIO_W}px;height:${mapaH}px;`;
+    document.body.appendChild(caixa);
+    let mapaImg = null;
+    try {
+      await Promise.all([document.fonts.ready, document.fonts.load('600 16px Barlow'), document.fonts.load('700 16px "Barlow Semi Condensed"')]);
+      const centro = L.latLng(raio.centro.lat, raio.centro.lng);
+      mapaImg = L.map(caixa, { zoomControl: false, attributionControl: false, zoomSnap: 0.25, fadeAnimation: false, zoomAnimation: false, markerZoomAnimation: false, inertia: false });
+      mapaImg.fitBounds(centro.toBounds(raio.km * 2000), { padding: [56, 56], animate: false, maxZoom: 16 });
+      const base = L.tileLayer(TILES[tema].base, { maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' });
+      const ref = L.tileLayer(TILES[tema].ref, { maxZoom: 19, maxNativeZoom: 16, crossOrigin: 'anonymous' });
+      const carregou = Promise.all([base, ref].map(t => new Promise(res => { t.once('load', res); setTimeout(res, 20000); })));
+      base.addTo(mapaImg); ref.addTo(mapaImg);
+      await carregou;
+      await espera(400);
+      const fundo = await window.htmlToImage.toCanvas(caixa, { width: RAIO_W, height: mapaH, pixelRatio: 1, backgroundColor: cor('--sup-2') });
+
+      const out = document.createElement('canvas');
+      out.width = RAIO_W; out.height = RAIO_H;
+      const c = out.getContext('2d');
+      c.fillStyle = cor('--sup'); c.fillRect(0, 0, RAIO_W, RAIO_H);
+      c.drawImage(fundo, 0, RAIO_CAB, RAIO_W, mapaH);
+      const pt = ll => { const q = mapaImg.latLngToContainerPoint(ll); return { x: q.x, y: q.y + RAIO_CAB }; };
+
+      // área fora do raio esmaecida + contorno do raio
+      const pc = pt(centro);
+      const pn = pt(L.latLng(centro.lat + raio.km / 110.574, centro.lng));
+      const rpx = Math.abs(pc.y - pn.y);
+      c.save();
+      c.beginPath(); c.rect(0, RAIO_CAB, RAIO_W, mapaH); c.clip();
+      c.beginPath(); c.rect(0, RAIO_CAB, RAIO_W, mapaH); c.arc(pc.x, pc.y, rpx, 0, Math.PI * 2, true);
+      c.fillStyle = tema === 'escuro' ? 'rgba(10, 12, 15, .45)' : 'rgba(245, 246, 248, .55)';
+      c.fill('evenodd');
+      c.beginPath(); c.arc(pc.x, pc.y, rpx, 0, Math.PI * 2);
+      c.setLineDash([12, 9]); c.lineWidth = 3; c.strokeStyle = cor('--teal'); c.stroke();
+      c.setLineDash([]);
+      // centro
+      c.beginPath(); c.arc(pc.x, pc.y, 7, 0, Math.PI * 2); c.fillStyle = cor('--sup'); c.fill();
+      c.lineWidth = 3; c.strokeStyle = cor('--teal'); c.stroke();
+      // rótulo do raio no topo do círculo
+      const rotRaio = `${inteiro(raio.km)} km`;
+      c.font = '700 17px "Barlow Semi Condensed", Barlow, sans-serif';
+      const wr = c.measureText(rotRaio).width + 20;
+      const yr = Math.max(RAIO_CAB + 8, pc.y - rpx - 14);
+      c.fillStyle = cor('--teal');
+      c.beginPath(); c.roundRect(pc.x - wr / 2, yr, wr, 28, 14); c.fill();
+      c.fillStyle = '#FFFFFF'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(rotRaio, pc.x, yr + 14.5);
+      c.textAlign = 'left';
+      c.restore();
+
+      // pinos
+      const faixa = calcularFaixa(lista);
+      const S = 1.2;
+      const itens = lista.map(p => {
+        const q = pt(L.latLng(p.lat, p.lng));
+        return { p, x: q.x, y: q.y, v: precoDe(p, estado.combustivel) };
+      }).sort((a, b) => a.y - b.y);
+      const corPino = n => n === 'baixo' ? cor('--tag-baixo') : n === 'alto' ? cor('--tag-alto') : n === 'sem' ? cor('--sup-3') : cor('--pino-medio');
+      itens.forEach(it => {
+        const n = nivel(it.v, faixa);
+        c.save();
+        c.translate(it.x - 15 * S, it.y - 39 * S);
+        c.scale(S, S);
+        if (inativo(it.p)) c.globalAlpha = .6;
+        c.shadowColor = 'rgba(0, 0, 0, .3)'; c.shadowBlur = 5; c.shadowOffsetY = 2;
+        c.fillStyle = corPino(n); c.fill(CAMINHO_PINO);
+        c.shadowColor = 'transparent';
+        c.lineWidth = 1; c.strokeStyle = n === 'sem' ? cor('--texto-3') : 'rgba(0, 0, 0, .25)'; c.stroke(CAMINHO_PINO);
+        c.beginPath(); c.arc(15, 15.4, 4.6, 0, Math.PI * 2); c.fillStyle = n === 'sem' ? cor('--texto-3') : '#FFFFFF'; c.fill();
+        c.restore();
+      });
+
+      // rótulos: nome + preço, sem sobrepor outros rótulos nem pinos
+      const area = { x: 6, y: RAIO_CAB + 6, w: RAIO_W - 12, h: mapaH - 12 };
+      const ocupados = itens.map(it => ({ x: it.x - 15 * S, y: it.y - 40 * S, w: 30 * S, h: 40 * S }));
+      const fNome = '600 15px Barlow, sans-serif';
+      const fPreco = '700 16px "Barlow Semi Condensed", Barlow, sans-serif';
+      const corPreco = n => n === 'baixo' ? cor('--destaque') : n === 'alto' ? cor('--acao-forte') : cor('--texto-2');
+      const H = 28, topoPino = 40 * S;
+      itens.forEach(it => {
+        c.font = fNome;
+        const nome = encurtar(c, it.p.nome, 260);
+        const wNome = c.measureText(nome).width;
+        c.font = fPreco;
+        const txtPreco = it.v === null ? '' : `R$ ${preco(it.v)}`;
+        const wPreco = txtPreco ? c.measureText(txtPreco).width + 10 : 0;
+        const W = 10 + wNome + wPreco + 10;
+        const cands = [
+          { x: it.x - W / 2, y: it.y - topoPino - 6 - H },
+          { x: it.x + 16, y: it.y - topoPino - H + 6 },
+          { x: it.x - 16 - W, y: it.y - topoPino - H + 6 },
+          { x: it.x + 20, y: it.y - topoPino / 2 - H / 2 - 4 },
+          { x: it.x - 20 - W, y: it.y - topoPino / 2 - H / 2 - 4 },
+          { x: it.x - W / 2, y: it.y + 6 },
+          { x: it.x - W / 2, y: it.y - topoPino - 12 - H * 2 },
+          { x: it.x - W / 2, y: it.y + 12 + H }
+        ].map(r => Object.assign(r, { w: W, h: H }));
+        let melhor = null, menor = Infinity;
+        for (const r of cands) {
+          const s = retanguloLivre(r, ocupados, area);
+          if (s < menor) { menor = s; melhor = r; }
+          if (s === 0) break;
+        }
+        if (!melhor) melhor = cands[0];
+        // leva o rótulo para dentro da área se tudo estourou a borda
+        melhor.x = Math.max(area.x, Math.min(area.x + area.w - W, melhor.x));
+        melhor.y = Math.max(area.y, Math.min(area.y + area.h - H, melhor.y));
+        ocupados.push(melhor);
+        it.rot = { r: melhor, nome, wNome, txtPreco, n: nivel(it.v, faixa) };
+      });
+      // linhas guia para rótulos afastados do pino
+      itens.forEach(it => {
+        const r = it.rot.r;
+        const cx = Math.max(r.x, Math.min(r.x + r.w, it.x)), cy = Math.max(r.y, Math.min(r.y + r.h, it.y - topoPino / 2));
+        if (Math.hypot(cx - it.x, cy - (it.y - topoPino / 2)) > topoPino * 1.1) {
+          c.beginPath(); c.moveTo(it.x, it.y - topoPino / 2); c.lineTo(cx, cy);
+          c.lineWidth = 1.5; c.strokeStyle = cor('--texto-3'); c.stroke();
+        }
+      });
+      itens.forEach(it => {
+        const { r, nome, wNome, txtPreco, n } = it.rot;
+        c.save();
+        c.shadowColor = 'rgba(0, 0, 0, .18)'; c.shadowBlur = 6; c.shadowOffsetY = 1;
+        c.fillStyle = cor('--sup');
+        c.beginPath(); c.roundRect(r.x, r.y, r.w, r.h, 6); c.fill();
+        c.restore();
+        c.lineWidth = 1; c.strokeStyle = cor('--linha-forte');
+        c.beginPath(); c.roundRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1, 6); c.stroke();
+        c.textBaseline = 'middle';
+        c.font = fNome; c.fillStyle = inativo(it.p) ? cor('--texto-3') : cor('--texto');
+        c.fillText(nome, r.x + 10, r.y + H / 2 + 1);
+        if (txtPreco) {
+          c.font = fPreco; c.fillStyle = corPreco(n);
+          c.fillText(txtPreco, r.x + 10 + wNome + 10, r.y + H / 2 + 1);
+        }
+      });
+
+      // atribuição do mapa base
+      c.font = '500 12px Barlow, sans-serif';
+      const atrib = 'Mapa © Esri, HERE, Garmin, © OpenStreetMap';
+      const wa = c.measureText(atrib).width + 14;
+      c.fillStyle = cor('--sup'); c.globalAlpha = .85;
+      c.fillRect(RAIO_W - wa, RAIO_CAB + mapaH - 20, wa, 20);
+      c.globalAlpha = 1; c.fillStyle = cor('--texto-3'); c.textBaseline = 'middle';
+      c.fillText(atrib, RAIO_W - wa + 7, RAIO_CAB + mapaH - 10);
+
+      // cabeçalho
+      c.fillStyle = cor('--sup'); c.fillRect(0, 0, RAIO_W, RAIO_CAB);
+      let x = 40;
+      if (el.logo.complete && el.logo.naturalWidth && !el.logo.classList.contains('sem-logo')) {
+        const h = 48, w = h * el.logo.naturalWidth / el.logo.naturalHeight;
+        c.drawImage(el.logo, x, (RAIO_CAB - h) / 2, w, h);
+        x += w + 24;
+        c.fillStyle = cor('--linha-forte'); c.fillRect(x, 26, 1, RAIO_CAB - 52);
+        x += 24;
+      }
+      c.textBaseline = 'alphabetic';
+      c.fillStyle = cor('--texto'); c.font = '600 28px Barlow, sans-serif';
+      c.fillText(CFG.TITULO, x, 44);
+      const nomeComb = COMBUSTIVEIS[estado.combustivel];
+      const resumo = [`Raio de ${inteiro(raio.km)} km a partir de ${raio.nomeCentro.replace(/^perto de /, '')}`,
+        plural(lista.length, 'posto', 'postos'),
+        faixa ? `${nomeComb} de R$ ${preco(faixa.min)} a R$ ${preco(faixa.max)}` : `sem preço de ${nomeComb}`,
+        estado.periodo === 'tudo' ? 'todo o período' : `últimos ${estado.periodo} dias`].join('  ·  ');
+      c.fillStyle = cor('--texto-2'); c.font = '500 18px Barlow, sans-serif';
+      c.fillText(resumo, x, 72);
+      c.fillStyle = cor('--teal'); c.fillRect(0, RAIO_CAB - 3, RAIO_W * .72, 3);
+      c.fillStyle = cor('--laranja'); c.fillRect(RAIO_W * .72, RAIO_CAB - 3, RAIO_W * .28, 3);
+
+      // rodapé
+      const yR = RAIO_H - RAIO_ROD;
+      c.fillStyle = cor('--sup'); c.fillRect(0, yR, RAIO_W, RAIO_ROD);
+      c.fillStyle = cor('--linha'); c.fillRect(0, yR, RAIO_W, 1);
+      c.textBaseline = 'middle';
+      let xr = 40;
+      c.font = '700 15px Barlow, sans-serif'; c.fillStyle = cor('--texto');
+      c.fillText(nomeComb, xr, yR + RAIO_ROD / 2); xr += c.measureText(nomeComb).width + 22;
+      [['--tag-baixo', 'Mais barato'], ['--pino-medio', 'Na média'], ['--tag-alto', 'Mais caro']].forEach(([v, t]) => {
+        c.beginPath(); c.arc(xr + 7, yR + RAIO_ROD / 2, 7, 0, Math.PI * 2); c.fillStyle = cor(v); c.fill();
+        c.font = '500 15px Barlow, sans-serif'; c.fillStyle = cor('--texto-2');
+        c.fillText(t, xr + 20, yR + RAIO_ROD / 2); xr += 20 + c.measureText(t).width + 26;
+      });
+      const agora = new Date();
+      const geradoTxt = agora.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', ' às');
+      const carimbo = `Imagem gerada em ${geradoTxt}  ·  ${estado.atualizadoTexto || ''}`;
+      c.font = '500 14px Barlow, sans-serif'; c.fillStyle = cor('--texto-3'); c.textAlign = 'right';
+      c.fillText(carimbo, RAIO_W - 40, yR + RAIO_ROD / 2);
+      c.textAlign = 'left';
+
+      const blob = await new Promise(res => out.toBlob(res, 'image/png'));
+      const stamp = `${agora.getFullYear()}${String(agora.getMonth() + 1).padStart(2, '0')}${String(agora.getDate()).padStart(2, '0')}-${String(agora.getHours()).padStart(2, '0')}${String(agora.getMinutes()).padStart(2, '0')}`;
+      const slug = norm(raio.nomeCentro.replace(/^perto de /, '')).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'centro';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `mapa-raio-${raio.km}km-${slug}-${stamp}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast(`Imagem 1920×1080 baixada com ${plural(lista.length, 'posto', 'postos')}`);
+    } catch (err) {
+      console.error(err);
+      toast('Não foi possível gerar a imagem. Tente um raio menor ou verifique a conexão.');
+    } finally {
+      if (mapaImg) mapaImg.remove();
+      caixa.remove();
+      elR.gerar.innerHTML = conteudoBotao;
+      elR.gerar.setAttribute('aria-disabled', String(!postosNoRaio().length));
     }
   }
 

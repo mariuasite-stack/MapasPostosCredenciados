@@ -12,7 +12,7 @@
   <link crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" crossorigin="anonymous" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="stylesheet" crossorigin="anonymous" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
-  <link rel="stylesheet" href="styles.css?v=3">
+  <link rel="stylesheet" href="styles.css?v=4">
   <script>
     try { var t = localStorage.getItem('mapa-tema'); if (t === 'escuro' || t === 'claro') document.documentElement.dataset.theme = t; } catch (e) {}
   </script>
@@ -35,6 +35,7 @@
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
       <symbol id="i-voltar" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
       <symbol id="i-alerta" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4L12 4Z"/><path d="M12 10v4.2M12 17v.01"/></symbol>
+      <symbol id="i-raio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="1.6"/><path d="M13.6 12h6.9"/></symbol>
       <symbol id="i-tela" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1.5"/></symbol>
     </defs>
   </svg>
@@ -113,12 +114,44 @@
         <button class="botao-mapa" id="btn-perto" type="button">
           <svg class="ic"><use href="#i-local"/></svg><span>Perto de mim</span>
         </button>
+        <button class="botao-mapa" id="btn-raio" type="button" aria-pressed="false" aria-controls="raio">
+          <svg class="ic"><use href="#i-raio"/></svg><span>Mapa por raio</span>
+        </button>
         <button class="botao-mapa" id="btn-captura" type="button">
           <svg class="ic"><use href="#i-captura"/></svg><span>Capturar área</span>
         </button>
       </div>
 
       <div class="legenda" id="legenda" aria-label="Legenda"></div>
+
+      <section class="raio" id="raio" aria-label="Mapa por raio" hidden>
+        <div class="raio-cabeca">
+          <h2>Mapa por raio</h2>
+          <p id="raio-dica">Escolha a cidade ou clique no mapa</p>
+        </div>
+        <label class="raio-campo">
+          <span>Centro</span>
+          <select id="raio-cidade"></select>
+        </label>
+        <div class="raio-campo">
+          <span id="raio-km-rotulo">Raio</span>
+          <div class="raio-km-linha">
+            <div class="segmentado" role="radiogroup" aria-labelledby="raio-km-rotulo" id="seg-raio">
+              <button type="button" role="radio" data-valor="10" aria-checked="false">10</button>
+              <button type="button" role="radio" data-valor="25" aria-checked="false">25</button>
+              <button type="button" role="radio" data-valor="50" aria-checked="true">50</button>
+              <button type="button" role="radio" data-valor="100" aria-checked="false">100</button>
+              <button type="button" role="radio" data-valor="200" aria-checked="false">200</button>
+            </div>
+            <label class="raio-km"><input id="raio-km" type="number" inputmode="numeric" min="1" max="500" step="1" value="50" aria-label="Raio em quilômetros"><span>km</span></label>
+          </div>
+        </div>
+        <div class="raio-rodape">
+          <p id="raio-contagem" aria-live="polite"></p>
+          <button type="button" class="botao" id="raio-cancelar">Fechar</button>
+          <button type="button" class="botao primario" id="raio-gerar" aria-disabled="true"><svg class="ic"><use href="#i-download"/></svg>Gerar imagem 1920×1080</button>
+        </div>
+      </section>
 
       <div class="captura" id="captura" hidden>
         <div class="captura-dica" id="captura-dica">
@@ -140,10 +173,10 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="config.js?v=3"></script>
+  <script src="config.js?v=4"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
