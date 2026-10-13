@@ -1,0 +1,32 @@
+# Sistema operacional / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.vscode/
+.idea/
+
+# Claude Code (configurações locais)
+.claude/settings.local.json
+.claude/
+
+# Impeccable: artefatos de trabalho (esboços, capturas, rodadas de decisão, build)
+# Mantém .impeccable/design.json e .impeccable/surfaces/ (registro do design)
+.impeccable/mocks/
+.impeccable/review/
+.impeccable/questions/
+.impeccable/build/
+.impeccable/live/
+.impeccable/config.local.json
+.impeccable/
+
+# Python / Node (scripts locais de teste)
+__pycache__/
+*.pyc
+node_modules/
+
+# Segredos e arquivos locais
+.env
+.env.*
+*.local.js
+*md

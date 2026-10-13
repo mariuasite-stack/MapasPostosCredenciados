@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="claro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mapa de Abastecimentos</title>
+  <meta name="description" content="Postos onde a frota abastece, com o último preço pago de Gasolina, Diesel S10 e ARLA.">
+  <meta name="theme-color" content="#FFFFFF">
+  <link rel="icon" type="image/png" href="favicon-32x32.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" crossorigin="anonymous" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    try { var t = localStorage.getItem('mapa-tema'); if (t === 'escuro' || t === 'claro') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-busca" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></symbol>
+      <symbol id="i-local" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
+      <symbol id="i-captura" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></symbol>
+      <symbol id="i-sol" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></symbol>
+      <symbol id="i-lua" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></symbol>
+      <symbol id="i-rota" viewBox="0 0 24 24"><path d="M3.5 11.2 20 4l-7.2 16.5-2.1-7.2-7.2-2.1Z"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/></symbol>
+      <symbol id="i-compartilhar" viewBox="0 0 24 24"><circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="m8.2 10.8 7.6-4.1M8.2 13.2l7.6 4.1"/></symbol>
+      <symbol id="i-fechar" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-pino" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.3"/></symbol>
+      <symbol id="i-copiar" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+      <symbol id="i-voltar" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+      <symbol id="i-alerta" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4L12 4Z"/><path d="M12 10v4.2M12 17v.01"/></symbol>
+      <symbol id="i-tela" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1.5"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="topo">
+    <a class="marca" href="./" aria-label="Mapa de Abastecimentos — início">
+      <img class="marca-logo" id="logo" src="Mariua_cyanLogo.png" alt="Mariuá Construção e Energia" width="392" height="166">
+      <span class="marca-divisor" aria-hidden="true"></span>
+      <span class="marca-titulo" id="titulo">Mapa de Abastecimentos</span>
+    </a>
+    <p class="topo-status" id="status" aria-live="polite">Carregando dados…</p>
+    <button class="botao-icone" id="btn-tema" type="button" aria-label="Usar tema escuro" title="Alternar tema">
+      <svg class="ic"><use href="#i-lua"/></svg>
+    </button>
+  </header>
+
+  <div class="aviso-exemplo" id="aviso-exemplo" hidden>
+    <svg class="ic"><use href="#i-alerta"/></svg>
+    <span>Dados de exemplo (sintéticos). Configure <code>API_URL</code> em <code>config.js</code> para ver os abastecimentos reais.</span>
+  </div>
+
+  <main class="area">
+    <aside class="painel" id="painel" data-folha="espiar" aria-label="Busca e lista de postos">
+      <button class="painel-alca" id="painel-alca" type="button" aria-label="Expandir lista"><span></span></button>
+
+      <div class="painel-cabeca">
+        <div class="abas" role="tablist" aria-label="Pesquisar por">
+          <button role="tab" class="aba" id="aba-posto" data-aba="posto" aria-selected="true">Posto</button>
+          <button role="tab" class="aba" id="aba-cidade" data-aba="cidade" aria-selected="false">Cidade</button>
+          <button role="tab" class="aba" id="aba-estado" data-aba="estado" aria-selected="false">Estado</button>
+        </div>
+
+        <label class="busca">
+          <svg class="ic" aria-hidden="true"><use href="#i-busca"/></svg>
+          <input id="busca" type="search" placeholder="Buscar posto, endereço ou CNPJ" autocomplete="off" spellcheck="false" aria-label="Buscar">
+          <button class="busca-limpar" id="busca-limpar" type="button" aria-label="Limpar busca" hidden><svg class="ic"><use href="#i-fechar"/></svg></button>
+        </label>
+        <p class="painel-status" id="status-movel"></p>
+
+        <div class="filtros">
+          <div class="segmentado" role="radiogroup" aria-label="Combustível" id="seg-combustivel">
+            <button role="radio" data-valor="gasolina" aria-checked="false">Gasolina</button>
+            <button role="radio" data-valor="dieselS10" aria-checked="true"><span class="longo">Diesel S10</span><span class="curto">S10</span></button>
+            <button role="radio" data-valor="arla" aria-checked="false">ARLA</button>
+          </div>
+          <div class="segmentado segmentado-periodo" role="radiogroup" aria-label="Período do último abastecimento" id="seg-periodo">
+            <button role="radio" data-valor="30" aria-checked="false"><span class="longo">30 dias</span><span class="curto">30d</span></button>
+            <button role="radio" data-valor="90" aria-checked="false"><span class="longo">90 dias</span><span class="curto">90d</span></button>
+            <button role="radio" data-valor="tudo" aria-checked="true">Tudo</button>
+          </div>
+        </div>
+
+        <div class="chips" id="chips" aria-label="Filtros ativos"></div>
+
+        <div class="resumo">
+          <p id="resumo" aria-live="polite"></p>
+          <label class="ordem" id="ordem-wrap">
+            <span class="sr">Ordenar</span>
+            <select id="ordem">
+              <option value="recente">Mais recentes</option>
+              <option value="preco">Menor preço</option>
+              <option value="nome">Nome</option>
+              <option value="distancia" disabled>Mais perto</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="lista" id="lista" role="list"></div>
+    </aside>
+
+    <section class="mapa-area" aria-label="Mapa">
+      <div id="mapa"></div>
+
+      <div class="mapa-acoes">
+        <button class="botao-mapa" id="btn-perto" type="button">
+          <svg class="ic"><use href="#i-local"/></svg><span>Perto de mim</span>
+        </button>
+        <button class="botao-mapa" id="btn-captura" type="button">
+          <svg class="ic"><use href="#i-captura"/></svg><span>Capturar área</span>
+        </button>
+      </div>
+
+      <div class="legenda" id="legenda" aria-label="Legenda"></div>
+
+      <div class="captura" id="captura" hidden>
+        <div class="captura-dica" id="captura-dica">
+          <span>Arraste sobre o mapa para escolher a área</span>
+          <button type="button" class="botao-texto" id="captura-tela"><svg class="ic"><use href="#i-tela"/></svg>Área visível</button>
+          <button type="button" class="botao-texto" id="captura-cancelar">Cancelar</button>
+        </div>
+        <div class="captura-ret" id="captura-ret" hidden><span class="captura-medida" id="captura-medida"></span></div>
+        <div class="captura-barra" id="captura-barra" hidden>
+          <button type="button" class="botao primario" id="captura-baixar"><svg class="ic"><use href="#i-download"/></svg>Baixar PNG</button>
+          <button type="button" class="botao" id="captura-refazer">Refazer</button>
+          <button type="button" class="botao" id="captura-sair">Cancelar</button>
+        </div>
+      </div>
+
+      <aside class="detalhe" id="detalhe" aria-label="Detalhes do posto" hidden tabindex="-1"></aside>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
